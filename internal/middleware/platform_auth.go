@@ -1,3 +1,8 @@
+// Package middleware: platform_auth implements Bearer+aud authentication for
+// inbound platform requests. The gateway-header trust path (X-IAG-* +
+// GATEWAY_INTERNAL_SECRET) has been removed. Procurement also supports a
+// "legacy" mode (local DB-backed users via iam.Service); that path lives in
+// auth.go and is independent of this file.
 package middleware
 
 import (
@@ -12,37 +17,27 @@ import (
 	"iag-procurement/backend/internal/ctxkeys"
 )
 
-const (
-	HeaderUserID        = "X-IAG-User-Id"
-	HeaderEmail         = "X-IAG-Email"
-	HeaderGroups        = "X-IAG-Groups"
-	HeaderRoles         = "X-IAG-Roles"
-	HeaderPermissions   = "X-IAG-Permissions"
-	HeaderIsSuperuser   = "X-IAG-Is-Superuser"
-	HeaderIsStaff       = "X-IAG-Is-Staff"
-	HeaderGatewaySecret = "X-IAG-Gateway-Secret"
-)
-
 type PlatformAuth struct {
-	authMode      string
-	gatewaySecret string
-	verifier      *authclient.Verifier
+	authMode string
+	verifier *authclient.Verifier
 }
 
 type PlatformAuthOptions struct {
-	Mode          string
-	GatewaySecret string
-	Verifier      *authclient.Verifier
+	// Mode is "jwt" (Bearer+aud) or "legacy" (local iam.Service handles auth
+	// via auth.go; this middleware is a no-op for legacy callers).
+	Mode     string
+	Verifier *authclient.Verifier
 }
 
 func NewPlatformAuth(opts PlatformAuthOptions) *PlatformAuth {
 	return &PlatformAuth{
-		authMode:      opts.Mode,
-		gatewaySecret: opts.GatewaySecret,
-		verifier:      opts.Verifier,
+		authMode: opts.Mode,
+		verifier: opts.Verifier,
 	}
 }
 
+// SetAuthMode pins the active auth mode on the Gin context so audit /
+// permission helpers can branch between legacy and platform principals.
 func SetAuthMode(c *gin.Context, mode string) {
 	c.Set(ctxkeys.AuthMode, mode)
 }
@@ -69,14 +64,13 @@ func (m *PlatformAuth) AttachPrincipal() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		switch m.authMode {
-		case "gateway":
-			m.fromGateway(c)
-		case "jwt":
+		if m.authMode == "jwt" {
 			m.fromJWT(c)
-		default:
-			c.Next()
+			return
 		}
+		// "legacy" and any other mode: skip platform Bearer verification —
+		// auth.go's JWTAuth handles legacy callers separately.
+		c.Next()
 	}
 }
 
@@ -93,39 +87,6 @@ func (m *PlatformAuth) RequireAuth() gin.HandlerFunc {
 		}
 		c.Next()
 	}
-}
-
-func (m *PlatformAuth) fromGateway(c *gin.Context) {
-	if m.gatewaySecret != "" && c.GetHeader(HeaderGatewaySecret) != m.gatewaySecret {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
-	}
-	sub := c.GetHeader(HeaderUserID)
-	if sub == "" {
-		c.Next()
-		return
-	}
-	userID, err := uuid.Parse(sub)
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid user id"})
-		return
-	}
-	groups := splitHeaderList(c.GetHeader(HeaderGroups))
-	if len(groups) == 0 {
-		groups = splitHeaderList(c.GetHeader(HeaderRoles))
-	}
-	perms := splitHeaderList(c.GetHeader(HeaderPermissions))
-	claims := &authclient.Claims{
-		Email:       c.GetHeader(HeaderEmail),
-		IsSuperuser: strings.EqualFold(c.GetHeader(HeaderIsSuperuser), "true"),
-		IsStaff:     strings.EqualFold(c.GetHeader(HeaderIsStaff), "true"),
-		Groups:      groups,
-		Roles:       groups,
-		Permissions: perms,
-	}
-	claims.Subject = sub
-	setPrincipal(c, userID, claims, perms)
-	c.Next()
 }
 
 func (m *PlatformAuth) fromJWT(c *gin.Context) {
@@ -192,20 +153,6 @@ func bearerToken(c *gin.Context) string {
 		return strings.TrimPrefix(header, "Bearer ")
 	}
 	return ""
-}
-
-func splitHeaderList(value string) []string {
-	if value == "" {
-		return nil
-	}
-	parts := strings.Split(value, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if trimmed := strings.TrimSpace(p); trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	return out
 }
 
 // VerifyBearerToken validates a raw JWT (reserved for future WebSocket use).

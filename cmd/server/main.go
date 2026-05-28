@@ -16,6 +16,7 @@ import (
 	"iag-procurement/backend/internal/cache"
 	"iag-procurement/backend/internal/config"
 	"iag-procurement/backend/internal/consumer"
+	procevents "iag-procurement/backend/internal/events"
 	"iag-procurement/backend/internal/db"
 	"iag-procurement/backend/internal/email"
 	"iag-procurement/backend/internal/handlers"
@@ -65,7 +66,7 @@ func main() {
 
 	var verifier *authclient.Verifier
 	if cfg.AuthMode == "jwt" {
-		verifier = authclient.NewVerifier(cfg.JWKSURL, cfg.JWTIssuer)
+		verifier = authclient.NewVerifier(cfg.JWKSURL, cfg.JWTIssuer, cfg.Audience)
 		initCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		if err := verifier.Refresh(initCtx); err != nil {
 			cancel()
@@ -75,9 +76,8 @@ func main() {
 		go jwksRefreshLoop(verifier)
 	}
 	platformAuth := middleware.NewPlatformAuth(middleware.PlatformAuthOptions{
-		Mode:          cfg.AuthMode,
-		GatewaySecret: cfg.GatewaySecret,
-		Verifier:      verifier,
+		Mode:     cfg.AuthMode,
+		Verifier: verifier,
 	})
 	log.Printf("auth: AUTH_MODE=%s", cfg.AuthMode)
 
@@ -118,6 +118,11 @@ func main() {
 	procurementRepo := repo.NewProcurement(pool)
 
 	var commercialConsumer *consumer.Commercial
+	publisher := procevents.NewPublisher(procevents.PublisherConfig{
+		Brokers: cfg.KafkaBrokers,
+		Enabled: cfg.EventBusEnabled && len(cfg.KafkaBrokers) > 0,
+	})
+	defer func() { _ = publisher.Close() }()
 	if cfg.EventBusEnabled && len(cfg.KafkaBrokers) > 0 {
 		commercialConsumer = consumer.NewCommercial(consumer.Config{
 			Brokers: cfg.KafkaBrokers,
@@ -158,6 +163,7 @@ func main() {
 		RBAC:         rbacStore,
 		Audit:        auditStore,
 		PlatformAuth: platformAuth,
+		Publisher:    publisher,
 	})
 	api.Mount(r)
 

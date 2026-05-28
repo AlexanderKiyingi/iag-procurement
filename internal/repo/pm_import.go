@@ -15,9 +15,10 @@ import (
 var ErrPMRequisitionExists = errors.New("pm requisition already imported")
 
 // ImportPMRequisition creates a procurement requisition from a PM workspace event (idempotent on pmID).
+// pmOwnerUserID is stored so approval/rejection events can route back to the originating PM workspace.
 func (p *Procurement) ImportPMRequisition(
 	ctx context.Context,
-	pmID, title, dept, requester, priority, status string,
+	pmID, pmOwnerUserID, title, dept, requester, priority, status string,
 	total float64,
 	currency, budgetID, sourceEventID string,
 ) (*models.Requisition, error) {
@@ -59,10 +60,17 @@ func (p *Procurement) ImportPMRequisition(
 	}
 	defer tx.Rollback(ctx)
 
+	pmOwner := strings.TrimSpace(pmOwnerUserID)
+	var pmOwnerArg any
+	if pmOwner == "" {
+		pmOwnerArg = nil
+	} else {
+		pmOwnerArg = pmOwner
+	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO requisitions (id, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id, pm_requisition_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,$10,$11)`,
-		id, title, dept, requester, priority, status, createdDay, total, currency, budgetID, pmID,
+		INSERT INTO requisitions (id, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id, pm_requisition_id, pm_workspace_owner)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,$10,$11,$12)`,
+		id, title, dept, requester, priority, status, createdDay, total, currency, budgetID, pmID, pmOwnerArg,
 	); err != nil {
 		return nil, err
 	}
@@ -92,6 +100,44 @@ func (p *Procurement) ImportPMRequisition(
 		Currency:  currency,
 		BudgetID:  budgetID,
 	}, nil
+}
+
+// PMLink represents the PM workspace fields stored on a procurement requisition.
+// Both fields may be empty if the requisition was not imported from PM.
+type PMLink struct {
+	PMRequisitionID string
+	PMWorkspaceOwner string
+}
+
+// GetPMLink returns the PM workspace identifiers for a procurement requisition.
+// Returns empty fields (and nil error) if the requisition is not PM-sourced.
+// Returns ErrNotFound if the requisition does not exist.
+func (p *Procurement) GetPMLink(ctx context.Context, requisitionID string) (PMLink, error) {
+	requisitionID = strings.TrimSpace(requisitionID)
+	if requisitionID == "" {
+		return PMLink{}, fmt.Errorf("requisition id required")
+	}
+	var pmID, pmOwner *string
+	err := p.pool.QueryRow(ctx, `
+		SELECT pm_requisition_id, pm_workspace_owner
+		FROM requisitions
+		WHERE id = $1`,
+		requisitionID,
+	).Scan(&pmID, &pmOwner)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PMLink{}, ErrNotFound
+		}
+		return PMLink{}, err
+	}
+	link := PMLink{}
+	if pmID != nil {
+		link.PMRequisitionID = *pmID
+	}
+	if pmOwner != nil {
+		link.PMWorkspaceOwner = *pmOwner
+	}
+	return link, nil
 }
 
 // ResolveBudgetForDept picks a seeded budget id matching dept name (fallback BDG-2026-UT).

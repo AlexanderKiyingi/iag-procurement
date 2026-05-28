@@ -35,16 +35,17 @@ type PlatformEvent struct {
 }
 
 type pmRequisitionData struct {
-	RequisitionID string `json:"requisitionId"`
-	Title         string `json:"title"`
-	Amount        string `json:"amount"`
-	Currency      string `json:"currency"`
-	Status        string `json:"status"`
-	RequestedBy   string `json:"requestedBy"`
-	ForDept       string `json:"forDept"`
-	Urgency       string `json:"urgency"`
-	Payee         string `json:"payee"`
-	Justification string `json:"justification"`
+	RequisitionID        string `json:"requisitionId"`
+	WorkspaceOwnerUserID string `json:"workspaceOwnerUserId"`
+	Title                string `json:"title"`
+	Amount               string `json:"amount"`
+	Currency             string `json:"currency"`
+	Status               string `json:"status"`
+	RequestedBy          string `json:"requestedBy"`
+	ForDept              string `json:"forDept"`
+	Urgency              string `json:"urgency"`
+	Payee                string `json:"payee"`
+	Justification        string `json:"justification"`
 }
 
 type Commercial struct {
@@ -127,6 +128,7 @@ func (c *Commercial) handlePMRequisition(ctx context.Context, evt PlatformEvent)
 	row, err := c.procurement.ImportPMRequisition(
 		ctx,
 		pmID,
+		strings.TrimSpace(data.WorkspaceOwnerUserID),
 		title,
 		dept,
 		strings.TrimSpace(data.RequestedBy),

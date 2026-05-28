@@ -12,6 +12,7 @@ import (
 	"iag-procurement/backend/internal/auditlog"
 	"iag-procurement/backend/internal/cache"
 	"iag-procurement/backend/internal/config"
+	"iag-procurement/backend/internal/events"
 	"iag-procurement/backend/internal/iam"
 	"iag-procurement/backend/internal/middleware"
 	"iag-procurement/backend/internal/models"
@@ -33,6 +34,7 @@ type API struct {
 	rbac         *rbac.Store
 	audit        *auditlog.Store
 	platformAuth *middleware.PlatformAuth
+	publisher    *events.Publisher
 }
 
 func NewAPI(d Deps) *API {
@@ -48,6 +50,7 @@ func NewAPI(d Deps) *API {
 		rbac:         d.RBAC,
 		audit:        d.Audit,
 		platformAuth: d.PlatformAuth,
+		publisher:    d.Publisher,
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"iag-procurement/backend/internal/auditlog"
 	"iag-procurement/backend/internal/cache"
 	"iag-procurement/backend/internal/config"
+	"iag-procurement/backend/internal/events"
 	"iag-procurement/backend/internal/iam"
 	"iag-procurement/backend/internal/middleware"
 	"iag-procurement/backend/internal/notifications"
@@ -16,15 +17,16 @@ import (
 
 // Deps bundles HTTP API dependencies.
 type Deps struct {
-	Pool        *pgxpool.Pool
-	Seed        *repo.Seed
-	Procurement *repo.Procurement
-	Cache       *cache.Client
-	Config      *config.Config
-	Notify      *notifications.Service
-	Bus         *signals.Bus
-	IAM         *iam.Service
-	RBAC        *rbac.Store
+	Pool         *pgxpool.Pool
+	Seed         *repo.Seed
+	Procurement  *repo.Procurement
+	Cache        *cache.Client
+	Config       *config.Config
+	Notify       *notifications.Service
+	Bus          *signals.Bus
+	IAM          *iam.Service
+	RBAC         *rbac.Store
 	Audit        *auditlog.Store
 	PlatformAuth *middleware.PlatformAuth
+	Publisher    *events.Publisher
 }

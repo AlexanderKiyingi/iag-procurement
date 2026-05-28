@@ -44,10 +44,14 @@ type Config struct {
 	KafkaCommercialTopic string
 	KafkaConsumerGroup   string
 
-	AuthMode        string
-	GatewaySecret   string
-	JWTIssuer       string
-	JWKSURL         string
+	// AuthMode is "jwt" (platform Bearer+aud, production default) or "legacy"
+	// (local DB-backed users + HS256, kept for the standalone procurement app
+	// and integration tests). The pre-cutover "gateway" header-trust path has
+	// been removed.
+	AuthMode  string
+	JWTIssuer string
+	JWKSURL   string
+	Audience  string
 }
 
 func Load() (*Config, error) {
@@ -91,11 +95,11 @@ func Load() (*Config, error) {
 		seedDefault = "false"
 	}
 
-	authMode := strings.ToLower(strings.TrimSpace(getenv("AUTH_MODE", "gateway")))
+	authMode := strings.ToLower(strings.TrimSpace(getenv("AUTH_MODE", "jwt")))
 	switch authMode {
-	case "gateway", "jwt", "legacy":
+	case "jwt", "legacy":
 	default:
-		return nil, fmt.Errorf("AUTH_MODE must be gateway, jwt, or legacy (got %q)", authMode)
+		return nil, fmt.Errorf("AUTH_MODE must be jwt or legacy (got %q)", authMode)
 	}
 
 	jwtSecret := getenv("JWT_SECRET", devJWTSecret)
@@ -134,10 +138,10 @@ func Load() (*Config, error) {
 		KafkaCommercialTopic: getenv("KAFKA_COMMERCIAL_TOPIC", "iag.commercial"),
 		KafkaConsumerGroup:   getenv("KAFKA_CONSUMER_GROUP", "iag.procurement.commercial"),
 
-		AuthMode:      authMode,
-		GatewaySecret: strings.TrimSpace(os.Getenv("GATEWAY_INTERNAL_SECRET")),
-		JWTIssuer:     getenv("JWT_ISSUER", "http://localhost:3001"),
-		JWKSURL:       getenv("JWKS_URL", "http://127.0.0.1:3001/.well-known/jwks.json"),
+		AuthMode:  authMode,
+		JWTIssuer: getenv("JWT_ISSUER", "http://localhost:3001"),
+		JWKSURL:   getenv("JWKS_URL", "http://127.0.0.1:3001/.well-known/jwks.json"),
+		Audience:  getenv("AUDIENCE", "iag.procurement"),
 	}
 
 	if c.DatabaseURL == "" {
@@ -147,16 +151,16 @@ func Load() (*Config, error) {
 }
 
 func (c *Config) Validate() error {
-	if c.AuthMode == "gateway" {
-		if c.GatewaySecret == "" {
-			return fmt.Errorf("AUTH_MODE=gateway requires GATEWAY_INTERNAL_SECRET")
+	if c.AuthMode == "jwt" {
+		if c.JWKSURL == "" {
+			return fmt.Errorf("AUTH_MODE=jwt requires JWKS_URL")
 		}
-		if len(c.GatewaySecret) < 16 {
-			return fmt.Errorf("GATEWAY_INTERNAL_SECRET must be at least 16 characters")
+		if c.Audience == "" {
+			return fmt.Errorf("AUTH_MODE=jwt requires AUDIENCE (e.g. iag.procurement)")
 		}
 	}
-	if c.AuthMode == "jwt" && c.JWKSURL == "" {
-		return fmt.Errorf("AUTH_MODE=jwt requires JWKS_URL")
+	if c.Environment == "production" && c.AuthMode != "jwt" {
+		return fmt.Errorf("AUTH_MODE must be jwt in production (got %q)", c.AuthMode)
 	}
 	if c.Environment == "production" && c.AuthMode == "legacy" {
 		if c.JWTSecret == "" || c.JWTSecret == devJWTSecret {

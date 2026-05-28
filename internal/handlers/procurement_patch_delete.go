@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"iag-procurement/backend/internal/models"
+	"iag-procurement/backend/internal/repo"
 )
 
 type patchVendorBody struct {
@@ -119,7 +122,38 @@ func (a *API) patchRequisition(c *gin.Context) {
 		return
 	}
 	a.InvalidateSeedCache(c.Request.Context())
+	if body.Status != nil {
+		a.emitRequisitionStatusChange(c, row, *body.Status)
+	}
 	c.JSON(http.StatusOK, row)
+}
+
+// emitRequisitionStatusChange publishes procurement.requisition.approved or
+// .rejected on iag.commercial when a PATCH transitions to a terminal status.
+// PM-imported requisitions carry workspaceOwnerUserId so the originating PM
+// workspace can be located by the consumer. Best-effort — never fails the HTTP
+// response.
+func (a *API) emitRequisitionStatusChange(c *gin.Context, row *models.Requisition, status string) {
+	if a.publisher == nil || !a.publisher.Enabled() || row == nil {
+		return
+	}
+	outcome := strings.ToLower(strings.TrimSpace(status))
+	if outcome != "approved" && outcome != "rejected" {
+		return
+	}
+	link, err := a.procurement.GetPMLink(c.Request.Context(), row.ID)
+	if err != nil {
+		// Failed lookup shouldn't block the publish — still emit with the
+		// procurement id, just without PM routing.
+		link = repo.PMLink{}
+	}
+	actor := authActorEmail(c)
+	switch outcome {
+	case "approved":
+		a.publisher.PublishRequisitionApproved(c.Request.Context(), row.ID, link.PMRequisitionID, link.PMWorkspaceOwner, actor, row.BudgetID)
+	case "rejected":
+		a.publisher.PublishRequisitionRejected(c.Request.Context(), row.ID, link.PMRequisitionID, link.PMWorkspaceOwner, actor, row.BudgetID)
+	}
 }
 
 func (a *API) deleteRequisition(c *gin.Context) {
