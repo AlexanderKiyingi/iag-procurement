@@ -24,14 +24,17 @@ type Config struct {
 	SeedCacheTTL    time.Duration
 	CORSAllowOrigin string
 
-	SMTPHost     string
-	SMTPPort     int
-	SMTPUser     string
-	SMTPPassword string
-	SMTPFrom     string
-
-	NotifyQueueKey        string
-	NotifyConsumerWorkers int
+	// Central notifications service (iag-notifications) integration.
+	// When NotificationsURL is empty, procurement falls back to a Noop
+	// dispatcher so local dev does not require auth + notifications to
+	// be running. In production, the four NOTIFICATIONS_* env vars are
+	// required and procurement uses an OAuth2 client_credentials token
+	// (minted from AuthTokenURL) to call POST /v1/dispatch.
+	NotificationsURL          string
+	NotificationsClientID     string
+	NotificationsClientSecret string
+	NotificationsAudience     string
+	AuthTokenURL              string
 
 	SignalRedisChannel string
 
@@ -66,20 +69,6 @@ func Load() (*Config, error) {
 	if s := os.Getenv("SEED_CACHE_TTL_SECONDS"); s != "" {
 		if n, err := strconv.Atoi(s); err == nil && n > 0 {
 			ttl = time.Duration(n) * time.Second
-		}
-	}
-
-	smtpPort := 587
-	if s := os.Getenv("SMTP_PORT"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 {
-			smtpPort = n
-		}
-	}
-
-	workers := 2
-	if s := os.Getenv("NOTIFY_CONSUMER_WORKERS"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 {
-			workers = n
 		}
 	}
 
@@ -118,14 +107,11 @@ func Load() (*Config, error) {
 		SeedCacheTTL:    ttl,
 		CORSAllowOrigin: getenv("CORS_ALLOW_ORIGIN", "http://localhost:3000"),
 
-		SMTPHost:     os.Getenv("SMTP_HOST"),
-		SMTPPort:     smtpPort,
-		SMTPUser:     os.Getenv("SMTP_USER"),
-		SMTPPassword: os.Getenv("SMTP_PASSWORD"),
-		SMTPFrom:     getenv("SMTP_FROM", "procurement@localhost"),
-
-		NotifyQueueKey:        getenv("NOTIFY_QUEUE_KEY", "procurement:notify:queue"),
-		NotifyConsumerWorkers: workers,
+		NotificationsURL:          strings.TrimSpace(os.Getenv("NOTIFICATIONS_URL")),
+		NotificationsClientID:     strings.TrimSpace(os.Getenv("NOTIFICATIONS_CLIENT_ID")),
+		NotificationsClientSecret: os.Getenv("NOTIFICATIONS_CLIENT_SECRET"),
+		NotificationsAudience:     getenv("NOTIFICATIONS_AUDIENCE", "iag.notifications"),
+		AuthTokenURL:              strings.TrimSpace(os.Getenv("AUTH_TOKEN_URL")),
 
 		SignalRedisChannel: getenv("SIGNAL_REDIS_CHANNEL", "procurement:signals"),
 

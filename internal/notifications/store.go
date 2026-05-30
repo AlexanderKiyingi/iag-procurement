@@ -3,11 +3,8 @@ package notifications
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"errors"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -35,45 +32,6 @@ func (s *Store) InsertInApp(ctx context.Context, eventType, title, body, severit
 		INSERT INTO notifications (event_type, title, body, severity)
 		VALUES ($1, $2, $3, $4) RETURNING id`, eventType, title, body, severity).Scan(&id)
 	return id, err
-}
-
-func (s *Store) InsertEmailJob(ctx context.Context, template, subject string, payload map[string]any) (int64, error) {
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return 0, err
-	}
-	var id int64
-	err = s.pool.QueryRow(ctx, `
-		INSERT INTO notification_email_jobs (template, subject, payload)
-		VALUES ($1, $2, $3::jsonb) RETURNING id`, template, subject, b).Scan(&id)
-	return id, err
-}
-
-func (s *Store) ClaimEmailJob(ctx context.Context, id int64) (template, subject string, payload []byte, ok bool, err error) {
-	err = s.pool.QueryRow(ctx, `
-		UPDATE notification_email_jobs
-		SET status = 'sending'
-		WHERE id = $1 AND status = 'queued'
-		RETURNING template, subject, payload::text`, id).Scan(&template, &subject, &payload)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", nil, false, nil
-	}
-	if err != nil {
-		return "", "", nil, false, err
-	}
-	return template, subject, payload, true, nil
-}
-
-func (s *Store) MarkEmailJobSent(ctx context.Context, id int64) error {
-	_, err := s.pool.Exec(ctx, `
-		UPDATE notification_email_jobs SET status = 'sent', sent_at = NOW() WHERE id = $1`, id)
-	return err
-}
-
-func (s *Store) MarkEmailJobFailed(ctx context.Context, id int64, msg string) error {
-	_, err := s.pool.Exec(ctx, `
-		UPDATE notification_email_jobs SET status = 'failed', error_message = $2 WHERE id = $1`, id, msg)
-	return err
 }
 
 func (s *Store) List(ctx context.Context, limit int) ([]Row, error) {

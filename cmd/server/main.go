@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,12 +19,12 @@ import (
 	"iag-procurement/backend/internal/consumer"
 	procevents "iag-procurement/backend/internal/events"
 	"iag-procurement/backend/internal/db"
-	"iag-procurement/backend/internal/email"
 	"iag-procurement/backend/internal/handlers"
 	"iag-procurement/backend/internal/iam"
 	"iag-procurement/backend/internal/middleware"
 	"iag-procurement/backend/internal/migrate"
 	"iag-procurement/backend/internal/notifications"
+	"iag-procurement/backend/internal/notifyclient"
 	"iag-procurement/backend/internal/rbac"
 	"iag-procurement/backend/internal/repo"
 	"iag-procurement/backend/internal/signals"
@@ -94,26 +95,39 @@ func main() {
 	}
 	defer rdb.Close()
 
-	var mailer email.Mailer = email.NoopMailer{}
-	if cfg.SMTPHost != "" {
-		mailer = &email.SMTPMailer{
-			Host: cfg.SMTPHost, Port: cfg.SMTPPort,
-			User: cfg.SMTPUser, Password: cfg.SMTPPassword,
-			From: cfg.SMTPFrom,
+	// Build the notify dispatcher. When NOTIFICATIONS_URL is set we
+	// require the OAuth2 client_credentials inputs and mint Bearer
+	// tokens to call iag-notifications POST /v1/dispatch. Otherwise
+	// fall back to a logging-only Noop so local dev does not need the
+	// auth + notifications dependency chain running.
+	var notifyDispatcher notifyclient.Dispatcher = notifyclient.Noop{}
+	if cfg.NotificationsURL != "" {
+		tokenURL := cfg.AuthTokenURL
+		if tokenURL == "" {
+			tokenURL = strings.TrimRight(cfg.JWTIssuer, "/") + "/oauth/token"
 		}
-		log.Printf("notifications: SMTP enabled (%s:%d)", cfg.SMTPHost, cfg.SMTPPort)
+		if cfg.NotificationsClientID == "" || cfg.NotificationsClientSecret == "" {
+			log.Fatal("notifications: NOTIFICATIONS_URL set but NOTIFICATIONS_CLIENT_ID/SECRET missing")
+		}
+		auth := notifyclient.NewServiceAuth(notifyclient.ServiceAuthOptions{
+			TokenURL:     tokenURL,
+			ClientID:     cfg.NotificationsClientID,
+			ClientSecret: cfg.NotificationsClientSecret,
+			Audience:     cfg.NotificationsAudience,
+		})
+		notifyDispatcher = notifyclient.NewClient(cfg.NotificationsURL, auth)
+		log.Printf("notifications: dispatching to %s (audience=%s)", cfg.NotificationsURL, cfg.NotificationsAudience)
 	} else {
-		log.Printf("notifications: SMTP disabled (set SMTP_HOST to send email)")
+		log.Printf("notifications: NOTIFICATIONS_URL unset; using noop dispatcher (set NOTIFICATIONS_URL to send via iag-notifications)")
 	}
 
 	notifyStore := notifications.NewStore(pool)
-	notifySvc := notifications.NewService(notifyStore, rdb, cfg.NotifyQueueKey, mailer)
+	notifySvc := notifications.NewService(notifyStore, notifyDispatcher)
 	bus := signals.NewBus()
 	notifySvc.Register(bus)
 
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
-	notifications.StartEmailConsumers(workerCtx, cfg.NotifyConsumerWorkers, rdb, cfg.NotifyQueueKey, notifyStore, mailer)
 
 	procurementRepo := repo.NewProcurement(pool)
 
@@ -177,7 +191,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("%s listening on %s (env=%s, signals=%q, notify=%q)", cfg.ServiceName, addr, cfg.Environment, cfg.SignalRedisChannel, cfg.NotifyQueueKey)
+		log.Printf("%s listening on %s (env=%s, signals=%q)", cfg.ServiceName, addr, cfg.Environment, cfg.SignalRedisChannel)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("listen: %v", err)
 		}

@@ -3,29 +3,31 @@ package notifications
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
-	"time"
 
-	"github.com/redis/go-redis/v9"
-
-	"iag-procurement/backend/internal/cache"
-	"iag-procurement/backend/internal/email"
 	"iag-procurement/backend/internal/events"
+	"iag-procurement/backend/internal/notifyclient"
 	"iag-procurement/backend/internal/signals"
 )
 
-// Service coordinates in-app rows, email jobs, the Redis queue, and signal handlers.
+// Service writes in-app notification rows and forwards email dispatch
+// to the central iag-notifications service via notifyclient. The
+// previous Redis-queue + SMTP path was removed in favour of central
+// dispatch, which owns retries, idempotency, provider plumbing, and
+// audit. Procurement is still authoritative for in-app rows because
+// they are served back to its own frontend.
 type Service struct {
-	store    *Store
-	cache    *cache.Client
-	queueKey string
-	mailer   email.Mailer
+	store  *Store
+	notify notifyclient.Dispatcher
 }
 
-func NewService(store *Store, c *cache.Client, queueKey string, mailer email.Mailer) *Service {
-	return &Service{store: store, cache: c, queueKey: queueKey, mailer: mailer}
+func NewService(store *Store, notify notifyclient.Dispatcher) *Service {
+	if notify == nil {
+		notify = notifyclient.Noop{}
+	}
+	return &Service{store: store, notify: notify}
 }
 
 // List returns recent in-app notifications.
@@ -66,7 +68,13 @@ func (s *Service) onRequisitionPending(ctx context.Context, e signals.Event) err
 	return err
 }
 
-// EnqueueAlertEmail persists an in-app notification, records an email job, and pushes the job id to Redis.
+// EnqueueAlertEmail records an in-app notification and dispatches an
+// email per recipient via the central notifications service. A failed
+// central dispatch is logged but does not fail the operation — the
+// in-app row is the source of truth for the operator-facing alert.
+// Notifications dedups by (eventId, channel, recipient), so the
+// per-recipient EventID derived from the in-app row id makes retries
+// safe.
 func (s *Service) EnqueueAlertEmail(ctx context.Context, p AlertJobPayload) error {
 	if len(p.To) == 0 {
 		return fmt.Errorf("notifications: missing recipients")
@@ -75,72 +83,30 @@ func (s *Service) EnqueueAlertEmail(ctx context.Context, p AlertJobPayload) erro
 	if p.Detail != "" {
 		body = p.Message + "\n\n" + p.Detail
 	}
-	if _, err := s.store.InsertInApp(ctx, events.ProcurementAlert, p.Title, body, "info"); err != nil {
-		return err
-	}
-	payload := map[string]any{
-		"to":      p.To,
-		"title":   p.Title,
-		"message": p.Message,
-		"detail":  p.Detail,
-	}
-	id, err := s.store.InsertEmailJob(ctx, "alert.html", p.Title, payload)
+	inAppID, err := s.store.InsertInApp(ctx, events.ProcurementAlert, p.Title, body, "info")
 	if err != nil {
 		return err
 	}
-	return s.cache.QueueLPush(ctx, s.queueKey, strconv.FormatInt(id, 10))
-}
-
-// StartEmailConsumers runs n blocking workers that dequeue job ids and send mail.
-func StartEmailConsumers(ctx context.Context, n int, c *cache.Client, queueKey string, store *Store, mailer email.Mailer) {
-	if n < 1 {
-		n = 1
+	eventID := "procurement.alert." + strconv.FormatInt(inAppID, 10)
+	variables := map[string]string{
+		"Title": p.Title,
+		"Body":  body,
 	}
-	for i := 0; i < n; i++ {
-		go func(workerID int) {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-				raw, err := c.QueueBRPop(ctx, 30*time.Second, queueKey)
-				if err != nil {
-					if errors.Is(err, redis.Nil) {
-						continue
-					}
-					time.Sleep(time.Second)
-					continue
-				}
-				id, err := strconv.ParseInt(raw, 10, 64)
-				if err != nil {
-					continue
-				}
-				processEmailJob(ctx, store, mailer, id)
-			}
-		}(i)
+	for _, to := range p.To {
+		_, err := s.notify.Dispatch(ctx, notifyclient.DispatchRequest{
+			Channel:    "email",
+			Recipient:  to,
+			TemplateID: "procurement.alert",
+			Variables:  variables,
+			EventID:    eventID,
+		})
+		if err != nil {
+			slog.WarnContext(ctx, "procurement.alert dispatch failed",
+				"recipient", to,
+				"eventId", eventID,
+				"err", err,
+			)
+		}
 	}
-}
-
-func processEmailJob(ctx context.Context, store *Store, mailer email.Mailer, id int64) {
-	tpl, subject, payloadBytes, ok, err := store.ClaimEmailJob(ctx, id)
-	if err != nil || !ok {
-		return
-	}
-	var p AlertJobPayload
-	if err := json.Unmarshal(payloadBytes, &p); err != nil {
-		_ = store.MarkEmailJobFailed(ctx, id, err.Error())
-		return
-	}
-	data := email.AlertData{Title: p.Title, Message: p.Message, Detail: p.Detail}
-	html, err := email.RenderHTML(tpl, data)
-	if err != nil {
-		_ = store.MarkEmailJobFailed(ctx, id, err.Error())
-		return
-	}
-	if err := mailer.SendHTML(ctx, p.To, subject, html); err != nil {
-		_ = store.MarkEmailJobFailed(ctx, id, err.Error())
-		return
-	}
-	_ = store.MarkEmailJobSent(ctx, id)
+	return nil
 }
