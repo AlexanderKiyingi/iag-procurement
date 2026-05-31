@@ -69,6 +69,7 @@ func (a *API) cors() gin.HandlerFunc {
 }
 
 func (a *API) Mount(r *gin.Engine) {
+	r.Use(middleware.SecurityHeaders())
 	r.Use(a.cors())
 	r.GET("/health", a.health)
 	r.GET("/healthz", a.health)
