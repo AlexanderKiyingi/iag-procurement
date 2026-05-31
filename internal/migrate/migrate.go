@@ -15,9 +15,16 @@ import (
 const migrateAdvisoryLockKey1 int32 = 771928834
 const migrateAdvisoryLockKey2 int32 = 629471902
 
+// schema_migrations.version is TEXT because this table is shared with the
+// platform-cutover services (notifications, SCM, contract-management) which
+// all use TEXT version keys. Sending int parameters at this column fails at
+// pgx parameter binding with "unable to encode N into text format for text
+// (OID 25): cannot find encode plan". Procurement's version values ("1",
+// "2", ...) are short integers serialized as strings and don't collide with
+// the other services' keys ("0001_initial" etc.).
 const migrationTable = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
-	version INT PRIMARY KEY,
+	version TEXT PRIMARY KEY,
 	applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 `
@@ -48,11 +55,11 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 		"007_rbac_admin_write_grants.sql", "008_staff.sql", "009_pm_integration.sql",
 	}
 	for i, name := range files {
-		version := i + 1
+		version := fmt.Sprintf("%d", i+1)
 		var exists bool
 		err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)`, version).Scan(&exists)
 		if err != nil {
-			return fmt.Errorf("check migration %d: %w", version, err)
+			return fmt.Errorf("check migration %s: %w", version, err)
 		}
 		if exists {
 			continue
@@ -66,7 +73,7 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 			return fmt.Errorf("apply migration %s: %w", name, err)
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, version); err != nil {
-			return fmt.Errorf("record migration %d: %w", version, err)
+			return fmt.Errorf("record migration %s: %w", version, err)
 		}
 	}
 
