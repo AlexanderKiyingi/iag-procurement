@@ -15,15 +15,17 @@ import (
 const migrateAdvisoryLockKey1 int32 = 771928834
 const migrateAdvisoryLockKey2 int32 = 629471902
 
-// schema_migrations.version is TEXT because this table is shared with the
-// platform-cutover services (notifications, SCM, contract-management) which
-// all use TEXT version keys. Sending int parameters at this column fails at
-// pgx parameter binding with "unable to encode N into text format for text
-// (OID 25): cannot find encode plan". Procurement's version values ("1",
-// "2", ...) are short integers serialized as strings and don't collide with
-// the other services' keys ("0001_initial" etc.).
+// Migration tracking lives in procurement.schema_migrations explicitly so
+// it can't collide with any other service that also writes a
+// schema_migrations table in the public schema of a shared Postgres
+// (notifications, SCM, contract-management all do). search_path is set on
+// every pool connection to "procurement, public" by internal/db, so
+// unqualified table references in the migration .sql files create their
+// objects inside the procurement schema as well — sidestepping the
+// cross-service column-type collisions (e.g. SCM's purchase_orders.id is
+// UUID, procurement's is TEXT) that previously crashed the migrator.
 const migrationTable = `
-CREATE TABLE IF NOT EXISTS schema_migrations (
+CREATE TABLE IF NOT EXISTS procurement.schema_migrations (
 	version TEXT PRIMARY KEY,
 	applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -57,7 +59,7 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 	for i, name := range files {
 		version := fmt.Sprintf("%d", i+1)
 		var exists bool
-		err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)`, version).Scan(&exists)
+		err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM procurement.schema_migrations WHERE version = $1)`, version).Scan(&exists)
 		if err != nil {
 			return fmt.Errorf("check migration %s: %w", version, err)
 		}
@@ -72,7 +74,7 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 		if err := execSQL(ctx, tx, string(body)); err != nil {
 			return fmt.Errorf("apply migration %s: %w", name, err)
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, version); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO procurement.schema_migrations (version) VALUES ($1)`, version); err != nil {
 			return fmt.Errorf("record migration %s: %w", version, err)
 		}
 	}
