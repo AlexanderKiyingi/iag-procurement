@@ -21,6 +21,9 @@ const (
 	CodeInternal            = "INTERNAL"
 	CodeServiceUnavailable  = "SERVICE_UNAVAILABLE"
 	CodeTooManyRequests     = "TOO_MANY_REQUESTS"
+	CodeNotImplemented      = "NOT_IMPLEMENTED"
+	CodeBadGateway          = "BAD_GATEWAY"
+	CodeGone                = "GONE"
 )
 
 type Detail struct {
@@ -86,4 +89,46 @@ func Internal(c *gin.Context, message string) {
 		message = "internal server error"
 	}
 	Write(c, http.StatusInternalServerError, CodeInternal, message)
+}
+
+// CodeForHTTPStatus maps an HTTP status to a stable API error code.
+func CodeForHTTPStatus(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return CodeBadRequest
+	case http.StatusUnauthorized:
+		return CodeUnauthorized
+	case http.StatusForbidden:
+		return CodeForbidden
+	case http.StatusNotFound:
+		return CodeNotFound
+	case http.StatusConflict:
+		return CodeConflict
+	case http.StatusGone:
+		return CodeGone
+	case http.StatusTooManyRequests:
+		return CodeTooManyRequests
+	case http.StatusNotImplemented:
+		return CodeNotImplemented
+	case http.StatusBadGateway:
+		return CodeBadGateway
+	case http.StatusServiceUnavailable:
+		return CodeServiceUnavailable
+	default:
+		return CodeInternal
+	}
+}
+
+// JSONStatus writes a non-aborting error response using the HTTP status code.
+func JSONStatus(c *gin.Context, status int, message string) {
+	JSON(c, status, CodeForHTTPStatus(status), message)
+}
+
+// JSONWith attaches extra top-level fields alongside the error envelope.
+func JSONWith(c *gin.Context, status int, message string, extra gin.H) {
+	payload := gin.H{"error": gin.H{"code": CodeForHTTPStatus(status), "message": message}}
+	for k, v := range extra {
+		payload[k] = v
+	}
+	c.JSON(status, payload)
 }
