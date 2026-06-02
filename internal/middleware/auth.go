@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/alvor-technologies/iag-authclient"
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 	"github.com/gin-gonic/gin"
 
 	"iag-procurement/backend/internal/iam"
@@ -23,17 +24,17 @@ func JWTAuth(svc *iam.Service) gin.HandlerFunc {
 		h := c.GetHeader("Authorization")
 		parts := strings.SplitN(h, " ", 2)
 		if len(parts) != 2 || !strings.EqualFold(strings.TrimSpace(parts[0]), "Bearer") {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
+			apierr.Unauthorized(c, "missing bearer token")
 			return
 		}
 		raw := strings.TrimSpace(parts[1])
 		if raw == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
+			apierr.Unauthorized(c, "missing bearer token")
 			return
 		}
 		cl, err := svc.ParseToken(raw)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			apierr.Unauthorized(c, "invalid or expired token")
 			return
 		}
 		c.Set(CtxUserID, cl.UserID)
@@ -53,7 +54,8 @@ func RequirePermission(code string) gin.HandlerFunc {
 				c.Next()
 				return
 			}
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "permission denied", "required": code})
+			apierr.WriteWith(c, http.StatusForbidden, apierr.CodeForbidden,
+				"permission denied: "+code, gin.H{"required_permission": code})
 			return
 		}
 		if v, ok := c.Get(CtxSuper); ok {
@@ -70,6 +72,7 @@ func RequirePermission(code string) gin.HandlerFunc {
 				return
 			}
 		}
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "permission denied", "required": code})
+		apierr.WriteWith(c, http.StatusForbidden, apierr.CodeForbidden,
+			"permission denied: "+code, gin.H{"required_permission": code})
 	}
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 	"iag-procurement/backend/internal/middleware"
 )
 
@@ -116,14 +117,14 @@ func (a *API) listAdminUsers(c *gin.Context) {
 
 func (a *API) listAPIAuditLogs(c *gin.Context) {
 	if a.audit == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "audit log not configured"})
+		apierr.JSON(c, http.StatusServiceUnavailable, apierr.CodeServiceUnavailable, "audit log not configured")
 		return
 	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
 	rows, err := a.audit.List(c.Request.Context(), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		apierr.JSON(c, http.StatusInternalServerError, apierr.CodeInternal, "could not list audit logs")
 		return
 	}
-	c.JSON(http.StatusOK, rows)
+	c.JSON(http.StatusOK, gin.H{"items": rows, "total": len(rows)})
 }

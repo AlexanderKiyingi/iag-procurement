@@ -45,6 +45,9 @@ jobs:
         with:
           go-version: "1.23"
 
+      - name: Point platform-go at vendored snapshot
+        run: go mod edit -replace=github.com/alvor-technologies/iag-platform-go=$(pwd)/third_party/platform-go
+
       - name: go mod tidy
         run: go mod tidy
 
@@ -65,5 +68,5 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v4
-      - name: Build image
-        run: docker build -t iag-procurement:ci .
+      - name: Build production image (standalone target)
+        run: docker build --target standalone -t iag-procurement:ci .

@@ -54,23 +54,9 @@ func NewAPI(d Deps) *API {
 	}
 }
 
-func (a *API) cors() gin.HandlerFunc {
-	origin := a.cfg.CORSAllowOrigin
-	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", origin)
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		if c.Request.Method == http.MethodOptions {
-			c.AbortWithStatus(http.StatusNoContent)
-			return
-		}
-		c.Next()
-	}
-}
-
 func (a *API) Mount(r *gin.Engine) {
 	r.Use(middleware.SecurityHeaders())
-	r.Use(a.cors())
+	r.Use(middleware.CORS(a.cfg.CORSAllowOrigin))
 	r.GET("/health", a.health)
 	r.GET("/healthz", a.health)
 	r.GET("/ready", a.ready)
@@ -167,6 +153,10 @@ func (a *API) Mount(r *gin.Engine) {
 			emit.Use(middleware.RequirePermission(rbac.EmitNotification))
 			emit.POST("/notifications/emit", a.emitNotification)
 
+			al := sec.Group("")
+			al.Use(middleware.RequirePermission(rbac.ViewAPIAudit))
+			al.GET("/admin/audit-logs", a.listAPIAuditLogs)
+
 			if legacyAuth {
 				ap := sec.Group("")
 				ap.Use(middleware.RequirePermission(rbac.ViewPermission))
@@ -188,10 +178,6 @@ func (a *API) Mount(r *gin.Engine) {
 				agMut.Use(middleware.RequirePermission(rbac.ViewGroup))
 				agMut.Use(middleware.RequirePermission(rbac.ChangeGroup))
 				agMut.PUT("/admin/groups/:id/permissions", a.putGroupPermissions)
-
-				al := sec.Group("")
-				al.Use(middleware.RequirePermission(rbac.ViewAPIAudit))
-				al.GET("/admin/audit-logs", a.listAPIAuditLogs)
 			} else {
 				adminGone := sec.Group("/admin")
 				adminGone.GET("/*path", a.adminIAMDeprecated)
@@ -210,8 +196,10 @@ func (a *API) health(c *gin.Context) {
 
 func (a *API) adminIAMDeprecated(c *gin.Context) {
 	c.JSON(http.StatusGone, gin.H{
-		"error":   "embedded admin IAM removed",
-		"message": "Use iag-authentication admin API (/api/v1/authentication/v1/admin) for users, groups, and permissions.",
+		"error": gin.H{
+			"code":    "GONE",
+			"message": "Embedded admin IAM removed; use iag-authentication admin API (/api/v1/authentication/v1/admin) for users, groups, and permissions.",
+		},
 	})
 }
 

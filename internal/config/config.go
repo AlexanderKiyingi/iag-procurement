@@ -107,7 +107,7 @@ func Load() (*Config, error) {
 		AutoMigrate:     getenv("AUTO_MIGRATE", "true") != "false",
 		SeedOnStartup:   getenv("SEED_ON_STARTUP", seedDefault) == "true",
 		SeedCacheTTL:    ttl,
-		CORSAllowOrigin: getenv("CORS_ALLOW_ORIGIN", "http://localhost:3000"),
+		CORSAllowOrigin: corsAllowOrigin(),
 
 		NotificationsURL:          strings.TrimSpace(os.Getenv("NOTIFICATIONS_URL")),
 		NotificationsClientID:     strings.TrimSpace(os.Getenv("NOTIFICATIONS_CLIENT_ID")),
@@ -168,7 +168,31 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("production with SEED_ON_STARTUP=true requires DEFAULT_ADMIN_PASSWORD (min 12 chars)")
 		}
 	}
+	if c.Environment == "production" && hasWildcardCORS(c.CORSAllowOrigin) {
+		return fmt.Errorf("CORS allowlist must not include '*' in production")
+	}
 	return nil
+}
+
+func corsAllowOrigin() string {
+	for _, key := range []string{"CORS_ALLOWED_ORIGINS", "CORS_ALLOW_ORIGIN", "CORS_ORIGIN", "ALLOWED_ORIGINS", "CORS_ORIGINS"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	return "http://localhost:3000,http://localhost:5173"
+}
+
+func hasWildcardCORS(allowed string) bool {
+	if allowed == "*" {
+		return true
+	}
+	for _, o := range strings.Split(allowed, ",") {
+		if strings.TrimSpace(o) == "*" {
+			return true
+		}
+	}
+	return false
 }
 
 func getenv(k, def string) string {

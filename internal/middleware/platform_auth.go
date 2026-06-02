@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/alvor-technologies/iag-platform-go/apierr"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
@@ -82,7 +83,7 @@ func (m *PlatformAuth) RequireAuth() gin.HandlerFunc {
 			return
 		}
 		if _, ok := UserID(c); !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			apierr.Unauthorized(c, "authentication required")
 			return
 		}
 		c.Next()
@@ -91,7 +92,7 @@ func (m *PlatformAuth) RequireAuth() gin.HandlerFunc {
 
 func (m *PlatformAuth) fromJWT(c *gin.Context) {
 	if m.verifier == nil {
-		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "jwt verifier not configured"})
+		apierr.Write(c, http.StatusServiceUnavailable, apierr.CodeServiceUnavailable, "JWT verifier not configured")
 		return
 	}
 	tokenStr := bearerToken(c)
@@ -101,7 +102,7 @@ func (m *PlatformAuth) fromJWT(c *gin.Context) {
 	}
 	claims, userID, err := m.verifier.Verify(tokenStr)
 	if err != nil {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+		apierr.Unauthorized(c, "invalid or expired token")
 		return
 	}
 	setPrincipal(c, userID, claims, claims.Permissions)

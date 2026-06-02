@@ -13,8 +13,16 @@
 
 ## Docker
 
+Standalone (Railway / iag-procurement repo root) uses the committed
+`third_party/platform-go` snapshot. Refresh before deploy when platform-go changes:
+
 ```bash
-docker build -t iag/procurement:latest .
+sh scripts/sync-platform-go.sh
+git add third_party/platform-go
+```
+
+```bash
+docker build --target standalone -t iag/procurement:latest .
 docker run --rm -p 4009:4009 \
   -e DATABASE_URL=postgres://... \
   -e REDIS_URL=redis://... \
