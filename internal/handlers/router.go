@@ -192,6 +192,13 @@ func (a *API) Mount(r *gin.Engine) {
 				al := sec.Group("")
 				al.Use(middleware.RequirePermission(rbac.ViewAPIAudit))
 				al.GET("/admin/audit-logs", a.listAPIAuditLogs)
+			} else {
+				adminGone := sec.Group("/admin")
+				adminGone.GET("/*path", a.adminIAMDeprecated)
+				adminGone.POST("/*path", a.adminIAMDeprecated)
+				adminGone.PATCH("/*path", a.adminIAMDeprecated)
+				adminGone.PUT("/*path", a.adminIAMDeprecated)
+				adminGone.DELETE("/*path", a.adminIAMDeprecated)
 			}
 		}
 	}
@@ -199,6 +206,13 @@ func (a *API) Mount(r *gin.Engine) {
 
 func (a *API) health(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "service": a.cfg.ServiceName})
+}
+
+func (a *API) adminIAMDeprecated(c *gin.Context) {
+	c.JSON(http.StatusGone, gin.H{
+		"error":   "embedded admin IAM removed",
+		"message": "Use iag-authentication admin API (/api/v1/authentication/v1/admin) for users, groups, and permissions.",
+	})
 }
 
 func (a *API) ready(c *gin.Context) {

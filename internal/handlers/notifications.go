@@ -48,7 +48,7 @@ type emitBody struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
-// emitNotification triggers a signal for demos (requires JWT + notifications.emit_demo).
+// emitNotification triggers a signal for demos (requires JWT + procurement.emit_notification).
 // Use ?broadcast=1 to publish only to Redis (subscriber inserts a feed row; no local bus handlers).
 func (a *API) emitNotification(c *gin.Context) {
 	var body emitBody

@@ -36,6 +36,6 @@ const (
 	ChangeContract   = "procurement.change_contract"
 	DeleteContract   = "procurement.delete_contract"
 	ViewAPIAudit     = "audit.view_api_log"
-	ViewInbox        = "notifications.view_inbox"
-	EmitNotification = "notifications.emit_demo"
+	ViewInbox        = "procurement.view_inbox"
+	EmitNotification = "procurement.emit_notification"
 )

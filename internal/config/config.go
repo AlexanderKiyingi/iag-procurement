@@ -35,6 +35,8 @@ type Config struct {
 	NotificationsClientSecret string
 	NotificationsAudience     string
 	AuthTokenURL              string
+	ServiceClientID           string
+	ServiceClientSecret       string
 
 	SignalRedisChannel string
 
@@ -112,6 +114,8 @@ func Load() (*Config, error) {
 		NotificationsClientSecret: os.Getenv("NOTIFICATIONS_CLIENT_SECRET"),
 		NotificationsAudience:     getenv("NOTIFICATIONS_AUDIENCE", "iag.notifications"),
 		AuthTokenURL:              strings.TrimSpace(os.Getenv("AUTH_TOKEN_URL")),
+		ServiceClientID:           strings.TrimSpace(getenv("SERVICE_CLIENT_ID", "iag-procurement")),
+		ServiceClientSecret:       os.Getenv("SERVICE_CLIENT_SECRET"),
 
 		SignalRedisChannel: getenv("SIGNAL_REDIS_CHANNEL", "procurement:signals"),
 
@@ -132,6 +136,9 @@ func Load() (*Config, error) {
 
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
+	}
+	if c.AuthTokenURL == "" {
+		c.AuthTokenURL = strings.TrimRight(c.JWTIssuer, "/") + "/oauth/token"
 	}
 	return c, c.Validate()
 }

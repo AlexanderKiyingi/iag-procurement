@@ -82,6 +82,12 @@ func main() {
 	})
 	log.Printf("auth: AUTH_MODE=%s", cfg.AuthMode)
 
+	if cfg.AuthMode == "jwt" && cfg.ServiceClientSecret != "" {
+		go registerPermissionsLoop(ctx, cfg)
+	} else if cfg.AuthMode == "jwt" {
+		log.Printf("procurement: SERVICE_CLIENT_SECRET unset — skipping permissions registration")
+	}
+
 	rbacStore := rbac.NewStore(pool)
 	var iamSvc *iam.Service
 	if cfg.AuthMode == "legacy" {
