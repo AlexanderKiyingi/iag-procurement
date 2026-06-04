@@ -138,6 +138,7 @@ func main() {
 	procurementRepo := repo.NewProcurement(pool)
 
 	var commercialConsumer *consumer.Commercial
+	var supplyChainConsumer *consumer.SupplyChain
 	publisher := procevents.NewPublisher(procevents.PublisherConfig{
 		Brokers: cfg.KafkaBrokers,
 		Enabled: cfg.EventBusEnabled && len(cfg.KafkaBrokers) > 0,
@@ -155,6 +156,18 @@ func main() {
 			}
 		}()
 		log.Printf("event bus: consuming %s as group %s", cfg.KafkaCommercialTopic, cfg.KafkaConsumerGroup)
+
+		supplyChainConsumer = consumer.NewSupplyChain(consumer.Config{
+			Brokers: cfg.KafkaBrokers,
+			GroupID: cfg.KafkaSupplyChainGroup,
+			Topic:   cfg.KafkaSupplyChainTopic,
+		}, procurementRepo)
+		go func() {
+			if err := supplyChainConsumer.Run(workerCtx); err != nil && workerCtx.Err() == nil {
+				log.Printf("supply-chain consumer stopped: %v", err)
+			}
+		}()
+		log.Printf("event bus: consuming %s as group %s (party sync)", cfg.KafkaSupplyChainTopic, cfg.KafkaSupplyChainGroup)
 	} else {
 		log.Printf("event bus: disabled (set EVENT_BUS_ENABLED=true and KAFKA_BROKERS)")
 	}

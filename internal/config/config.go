@@ -46,8 +46,10 @@ type Config struct {
 
 	KafkaBrokers         []string
 	EventBusEnabled      bool
-	KafkaCommercialTopic string
-	KafkaConsumerGroup   string
+		KafkaCommercialTopic  string
+		KafkaSupplyChainTopic string
+		KafkaConsumerGroup    string
+		KafkaSupplyChainGroup string
 
 	// AuthMode is "jwt" (platform Bearer+aud, production default) or "legacy"
 	// (local DB-backed users + HS256, kept for the standalone procurement app
@@ -125,8 +127,10 @@ func Load() (*Config, error) {
 
 		KafkaBrokers:         parseBrokers(os.Getenv("KAFKA_BROKERS")),
 		EventBusEnabled:      strings.EqualFold(os.Getenv("EVENT_BUS_ENABLED"), "true"),
-		KafkaCommercialTopic: getenv("KAFKA_COMMERCIAL_TOPIC", "iag.commercial"),
-		KafkaConsumerGroup:   getenv("KAFKA_CONSUMER_GROUP", "iag.procurement.commercial"),
+		KafkaCommercialTopic:  getenv("KAFKA_COMMERCIAL_TOPIC", "iag.commercial"),
+		KafkaSupplyChainTopic: getenv("KAFKA_SUPPLY_CHAIN_TOPIC", "iag.supply-chain"),
+		KafkaConsumerGroup:    getenv("KAFKA_CONSUMER_GROUP", "iag.procurement.commercial"),
+		KafkaSupplyChainGroup: getenv("KAFKA_SUPPLY_CHAIN_GROUP", "iag.procurement.supply-chain"),
 
 		AuthMode:  authMode,
 		JWTIssuer: getenv("JWT_ISSUER", "http://localhost:3001"),

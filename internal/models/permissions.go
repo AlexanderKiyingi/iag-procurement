@@ -41,5 +41,7 @@ func PermissionDescriptors() []PermissionDescriptor {
 		// Procurement-local inbox (not iag-notifications); registered under service name "procurement".
 		{Name: "procurement.view_inbox", Description: "Read in-app notification inbox"},
 		{Name: "procurement.emit_notification", Description: "Trigger signal / email demos"},
+		{Name: "procurement.view_own_po", Description: "View own purchase orders (vendor portal)"},
+		{Name: "procurement.view_own_invoice", Description: "View own invoices (vendor portal)"},
 	}
 }

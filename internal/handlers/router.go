@@ -153,6 +153,11 @@ func (a *API) Mount(r *gin.Engine) {
 			emit.Use(middleware.RequirePermission(rbac.EmitNotification))
 			emit.POST("/notifications/emit", a.emitNotification)
 
+			portal := sec.Group("/portal")
+			portal.GET("/me", middleware.RequirePermission(rbac.ViewOwnPO), a.PortalMe)
+			portal.GET("/purchase-orders", middleware.RequirePermission(rbac.ViewOwnPO), a.PortalPOs)
+			portal.GET("/invoices", middleware.RequirePermission(rbac.ViewOwnInvoice), a.PortalInvoices)
+
 			al := sec.Group("")
 			al.Use(middleware.RequirePermission(rbac.ViewAPIAudit))
 			al.GET("/admin/audit-logs", a.listAPIAuditLogs)

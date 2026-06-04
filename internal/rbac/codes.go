@@ -38,4 +38,6 @@ const (
 	ViewAPIAudit     = "audit.view_api_log"
 	ViewInbox        = "procurement.view_inbox"
 	EmitNotification = "procurement.emit_notification"
+	ViewOwnPO        = "procurement.view_own_po"
+	ViewOwnInvoice   = "procurement.view_own_invoice"
 )
