@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	scmPartyCreated = "scm.party.created"
-	scmPartyUpdated = "scm.party.updated"
+	scmPartyCreated      = "scm.party.created"
+	scmPartyUpdated      = "scm.party.updated"
+	scmPartyPortalLinked = "scm.party.portal_linked"
 )
 
 // SupplyChain consumes iag.supply-chain for party sync (Phase 4.6).
@@ -75,6 +76,7 @@ func (c *SupplyChain) handleMessage(ctx context.Context, msg kafka.Message) erro
 	}
 	switch evt.Type {
 	case scmPartyCreated, scmPartyUpdated:
+	case scmPartyPortalLinked:
 	default:
 		return nil
 	}
@@ -88,6 +90,18 @@ func (c *SupplyChain) handleMessage(ctx context.Context, msg kafka.Message) erro
 	}
 	if !ok {
 		return nil
+	}
+
+	if evt.Type == scmPartyPortalLinked {
+		var data struct {
+			PartyID         string `json:"party_id"`
+			PartyBusinessID string `json:"party_business_id"`
+			PlatformUserID  string `json:"platform_user_id"`
+		}
+		if err := json.Unmarshal(evt.Data, &data); err != nil {
+			return err
+		}
+		return c.procurement.LinkPortalUser(ctx, data.PartyID, data.PartyBusinessID, data.PlatformUserID)
 	}
 
 	var data scmPartyData
