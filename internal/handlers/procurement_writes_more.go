@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -209,6 +211,24 @@ func (a *API) postInvoice(c *gin.Context) {
 		idate, body.InvoiceNo, authActorEmail(c))
 	if mapProcurementErr(c, err) {
 		return
+	}
+	if a.publisher != nil && row != nil {
+		docRef := row.ID
+		if row.InvoiceNo != nil && strings.TrimSpace(*row.InvoiceNo) != "" {
+			docRef = strings.TrimSpace(*row.InvoiceNo)
+		}
+		currency := row.Currency
+		if currency == "" {
+			currency = "UGX"
+		}
+		var due *time.Time
+		if row.InvoiceDate != "" {
+			if t, err := time.Parse("2006-01-02", row.InvoiceDate); err == nil {
+				due = &t
+			}
+		}
+		a.publisher.PublishInvoiceReceived(c.Request.Context(), docRef, row.VendorID,
+			fmt.Sprintf("%.2f", row.Amount), currency, due)
 	}
 	a.InvalidateSeedCache(c.Request.Context())
 	c.JSON(http.StatusCreated, row)

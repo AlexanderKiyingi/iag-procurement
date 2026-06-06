@@ -23,6 +23,7 @@ const (
 	// Event types procurement emits on iag.commercial.
 	TypeRequisitionApproved = "procurement.requisition.approved"
 	TypeRequisitionRejected = "procurement.requisition.rejected"
+	TypeInvoiceReceived     = "procurement.invoice.received"
 )
 
 // platformEvent is the canonical CloudEvents-compatible envelope used by IAG.
@@ -88,6 +89,48 @@ func (p *Publisher) PublishRequisitionApproved(ctx context.Context, requisitionI
 // PublishRequisitionRejected emits procurement.requisition.rejected.
 func (p *Publisher) PublishRequisitionRejected(ctx context.Context, requisitionID, pmRequisitionID, workspaceOwnerUserID, rejectedBy, budgetID string) {
 	p.publishRequisitionOutcome(ctx, TypeRequisitionRejected, requisitionID, pmRequisitionID, workspaceOwnerUserID, rejectedBy, budgetID)
+}
+
+// PublishInvoiceReceived notifies iag-finance to create an AP open item.
+func (p *Publisher) PublishInvoiceReceived(ctx context.Context, invoiceNo, vendorRef, amount, currency string, dueDate *time.Time) {
+	if !p.Enabled() || invoiceNo == "" || amount == "" {
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	data := map[string]any{
+		"documentRef": invoiceNo,
+		"vendorRef":   vendorRef,
+		"amount":      amount,
+		"currency":    currency,
+		"description": "Procurement vendor invoice",
+	}
+	if dueDate != nil {
+		data["dueDate"] = dueDate.Format("2006-01-02")
+	}
+	evt := platformEvent{
+		ID:          uuid.NewString(),
+		Type:        TypeInvoiceReceived,
+		Time:        now,
+		Source:      Source,
+		SpecVersion: SpecVersion,
+		Data:        data,
+	}
+	body, err := json.Marshal(evt)
+	if err != nil {
+		slog.Warn("procurement invoice event marshal", "err", err)
+		return
+	}
+	if err := p.writer.WriteMessages(ctx, kafka.Message{
+		Topic: TopicCommercial,
+		Key:   []byte(invoiceNo),
+		Value: body,
+		Headers: []kafka.Header{
+			{Key: "ce-type", Value: []byte(TypeInvoiceReceived)},
+			{Key: "ce-source", Value: []byte(Source)},
+		},
+	}); err != nil {
+		slog.Warn("procurement invoice event publish", "err", err)
+	}
 }
 
 func (p *Publisher) publishRequisitionOutcome(ctx context.Context, eventType, requisitionID, pmRequisitionID, workspaceOwnerUserID, actor, budgetID string) {
