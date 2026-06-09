@@ -24,6 +24,7 @@ const (
 	TypeRequisitionApproved = "procurement.requisition.approved"
 	TypeRequisitionRejected = "procurement.requisition.rejected"
 	TypeInvoiceReceived     = "procurement.invoice.received"
+	TypeGrnPosted           = "procurement.grn.posted"
 )
 
 // platformEvent is the canonical CloudEvents-compatible envelope used by IAG.
@@ -89,6 +90,62 @@ func (p *Publisher) PublishRequisitionApproved(ctx context.Context, requisitionI
 // PublishRequisitionRejected emits procurement.requisition.rejected.
 func (p *Publisher) PublishRequisitionRejected(ctx context.Context, requisitionID, pmRequisitionID, workspaceOwnerUserID, rejectedBy, budgetID string) {
 	p.publishRequisitionOutcome(ctx, TypeRequisitionRejected, requisitionID, pmRequisitionID, workspaceOwnerUserID, rejectedBy, budgetID)
+}
+
+// GrnPostedLine is one PO line included in procurement.grn.posted for warehouse intake.
+type GrnPostedLine struct {
+	SKU string  `json:"sku"`
+	Qty float64 `json:"qty"`
+	UOM string  `json:"uom"`
+}
+
+// PublishGrnPosted notifies iag-warehouse to create a draft goods receipt.
+func (p *Publisher) PublishGrnPosted(ctx context.Context, grnID, poID, vendorID, receivedBy string, lines []GrnPostedLine) {
+	if !p.Enabled() || grnID == "" {
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	data := map[string]any{
+		"grn_id":      grnID,
+		"po_id":       poID,
+		"vendor_id":   vendorID,
+		"received_by": receivedBy,
+	}
+	if len(lines) > 0 {
+		raw := make([]map[string]any, 0, len(lines))
+		for _, l := range lines {
+			uom := l.UOM
+			if uom == "" {
+				uom = "ea"
+			}
+			raw = append(raw, map[string]any{"sku": l.SKU, "qty": l.Qty, "uom": uom})
+		}
+		data["lines"] = raw
+	}
+	evt := platformEvent{
+		ID:          uuid.NewString(),
+		Type:        TypeGrnPosted,
+		Time:        now,
+		Source:      Source,
+		SpecVersion: SpecVersion,
+		Data:        data,
+	}
+	body, err := json.Marshal(evt)
+	if err != nil {
+		slog.Warn("procurement grn event marshal", "err", err)
+		return
+	}
+	if err := p.writer.WriteMessages(ctx, kafka.Message{
+		Topic: TopicCommercial,
+		Key:   []byte(grnID),
+		Value: body,
+		Headers: []kafka.Header{
+			{Key: "ce-type", Value: []byte(TypeGrnPosted)},
+			{Key: "ce-source", Value: []byte(Source)},
+		},
+	}); err != nil {
+		slog.Warn("procurement grn event publish", "err", err)
+	}
 }
 
 // PublishInvoiceReceived notifies iag-finance to create an AP open item.

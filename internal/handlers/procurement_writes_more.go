@@ -171,6 +171,7 @@ func (a *API) postGrn(c *gin.Context) {
 	if mapProcurementErr(c, err) {
 		return
 	}
+	a.emitGrnPostedIfNeeded(c.Request.Context(), row)
 	a.InvalidateSeedCache(c.Request.Context())
 	c.JSON(http.StatusCreated, row)
 }

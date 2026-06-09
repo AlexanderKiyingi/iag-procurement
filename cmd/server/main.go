@@ -168,6 +168,18 @@ func main() {
 			}
 		}()
 		log.Printf("event bus: consuming %s as group %s (party sync)", cfg.KafkaSupplyChainTopic, cfg.KafkaSupplyChainGroup)
+
+		opsConsumer := consumer.NewOperations(consumer.OperationsConfig{
+			Brokers: cfg.KafkaBrokers,
+			GroupID: cfg.KafkaOperationsGroup,
+			Topic:   cfg.KafkaOperationsTopic,
+		}, procurementRepo)
+		go func() {
+			if err := opsConsumer.Run(workerCtx); err != nil && workerCtx.Err() == nil {
+				log.Printf("operations consumer stopped: %v", err)
+			}
+		}()
+		log.Printf("event bus: consuming %s as group %s (warehouse low stock)", cfg.KafkaOperationsTopic, cfg.KafkaOperationsGroup)
 	} else {
 		log.Printf("event bus: disabled (set EVENT_BUS_ENABLED=true and KAFKA_BROKERS)")
 	}
