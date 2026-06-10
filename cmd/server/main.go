@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/alvor-technologies/iag-authclient"
+	platformotel "github.com/alvor-technologies/iag-platform-go/otel"
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"iag-procurement/backend/internal/auditlog"
 	"iag-procurement/backend/internal/cache"
@@ -39,6 +41,20 @@ func main() {
 
 	if os.Getenv("GIN_MODE") == "release" {
 		gin.SetMode(gin.ReleaseMode)
+	}
+
+	// OpenTelemetry → otel-collector:4317 (non-blocking dial).
+	if tp, err := platformotel.Init(ctx, platformotel.Config{
+		ServiceName: cfg.ServiceName,
+		Environment: cfg.Environment,
+	}); err != nil {
+		log.Printf("otel disabled: %v", err)
+	} else {
+		defer func() {
+			sc, c := context.WithTimeout(context.Background(), 5*time.Second)
+			defer c()
+			_ = tp.Shutdown(sc)
+		}()
 	}
 
 	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
@@ -194,6 +210,7 @@ func main() {
 	})
 
 	r := gin.New()
+	r.Use(otelgin.Middleware(cfg.ServiceName))
 	r.Use(gin.Logger(), gin.Recovery())
 
 	api := handlers.NewAPI(handlers.Deps{
