@@ -52,6 +52,7 @@ Party sync updates `vendors.party_id` and `vendors.scm_business_id` for vendor/c
 - **PM:** `iag-project-management` requisition events
 - **SCM / finance:** shared `party_id` for supplier portal across services
 
-See [docs/PLATFORM_INTEGRATION.md](docs/PLATFORM_INTEGRATION.md).
+- [Frontend integration (Next.js)](docs/FRONTEND_INTEGRATION.md) — [docs/frontend.env.example](docs/frontend.env.example)
+- [Platform integration](docs/PLATFORM_INTEGRATION.md)
 
 Registry: [`subrepos.json`](../../../subrepos.json)
