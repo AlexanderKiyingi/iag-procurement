@@ -56,6 +56,7 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 		"005_procurement_mutations.sql", "006_procurement_extended_writes.sql",
 		"007_rbac_admin_write_grants.sql", "008_staff.sql", "009_pm_integration.sql",
 		"010_drop_dead_tables.sql", "011_party_portal.sql", "012_scm_party_link.sql",
+		"013_requisition_integration.sql",
 	}
 	for i, name := range files {
 		version := fmt.Sprintf("%d", i+1)

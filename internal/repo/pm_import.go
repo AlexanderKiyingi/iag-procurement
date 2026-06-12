@@ -20,7 +20,7 @@ func (p *Procurement) ImportPMRequisition(
 	ctx context.Context,
 	pmID, pmOwnerUserID, title, dept, requester, priority, status string,
 	total float64,
-	currency, budgetID, sourceEventID string,
+	currency, budgetID, payee, justification, sourceEventID string,
 ) (*models.Requisition, error) {
 	pmID = strings.TrimSpace(pmID)
 	if pmID == "" {
@@ -68,9 +68,10 @@ func (p *Procurement) ImportPMRequisition(
 		pmOwnerArg = pmOwner
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO requisitions (id, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id, pm_requisition_id, pm_workspace_owner)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,$10,$11,$12)`,
+		INSERT INTO requisitions (id, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id, pm_requisition_id, pm_workspace_owner, payee, justification)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,$10,$11,$12,$13,$14)`,
 		id, title, dept, requester, priority, status, createdDay, total, currency, budgetID, pmID, pmOwnerArg,
+		strings.TrimSpace(payee), strings.TrimSpace(justification),
 	); err != nil {
 		return nil, err
 	}
@@ -105,7 +106,7 @@ func (p *Procurement) ImportPMRequisition(
 // PMLink represents the PM workspace fields stored on a procurement requisition.
 // Both fields may be empty if the requisition was not imported from PM.
 type PMLink struct {
-	PMRequisitionID string
+	PMRequisitionID  string
 	PMWorkspaceOwner string
 }
 

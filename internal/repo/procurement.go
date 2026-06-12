@@ -5,16 +5,24 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"iag-procurement/backend/internal/models"
+	"iag-procurement/backend/internal/outbox"
 )
 
 type Procurement struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	outbox *outbox.Store
 }
+
+// SetOutbox wires the transactional outbox so requisition approval/rejection
+// events are enqueued atomically with the status change and drained to Kafka by
+// a background publisher. Nil leaves outbound events un-emitted (e.g. tests).
+func (p *Procurement) SetOutbox(store *outbox.Store) { p.outbox = store }
 
 func NewProcurement(pool *pgxpool.Pool) *Procurement {
 	return &Procurement{pool: pool}
@@ -90,7 +98,7 @@ func (p *Procurement) CreateRequisition(ctx context.Context, title, dept, reques
 }
 
 // CreatePurchaseOrder inserts a PO, line items, vendor open_po bump, and audit row.
-func (p *Procurement) CreatePurchaseOrder(ctx context.Context, vendorID, title, currency, budgetID string, expectedDate *time.Time, lines []models.PoLine, auditUser string) (*models.Po, error) {
+func (p *Procurement) CreatePurchaseOrder(ctx context.Context, vendorID, title, currency, budgetID, requisitionID string, expectedDate *time.Time, lines []models.PoLine, auditUser string) (*models.Po, error) {
 	if len(lines) == 0 {
 		return nil, fmt.Errorf("at least one line item is required")
 	}
@@ -117,11 +125,20 @@ func (p *Procurement) CreatePurchaseOrder(ctx context.Context, vendorID, title, 
 	defer tx.Rollback(ctx)
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO purchase_orders (id, vendor_id, title, total, currency, status, created_at, expected_date, budget_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		id, vendorID, title, total, currency, status, createdDay, expectedDate, budgetID,
+		INSERT INTO purchase_orders (id, vendor_id, title, total, currency, status, created_at, expected_date, budget_id, requisition_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''))`,
+		id, vendorID, title, total, currency, status, createdDay, expectedDate, budgetID, strings.TrimSpace(requisitionID),
 	); err != nil {
 		return nil, err
+	}
+
+	// Link the PO back to its source requisition and advance the requisition
+	// to "Ordered" so its lifecycle reflects fulfillment (best-effort: only
+	// when a real requisition id was supplied).
+	if rid := strings.TrimSpace(requisitionID); rid != "" {
+		if _, err := tx.Exec(ctx, `UPDATE requisitions SET status = 'Ordered' WHERE id = $1`, rid); err != nil {
+			return nil, err
+		}
 	}
 
 	for _, ln := range lines {

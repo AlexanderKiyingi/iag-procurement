@@ -45,15 +45,15 @@ func (a *API) postVendor(c *gin.Context) {
 }
 
 type postItemBody struct {
-	SKU                string  `json:"sku" binding:"required"`
-	Name               string  `json:"name" binding:"required"`
-	Category           string  `json:"category"`
-	Uom                string  `json:"uom"`
-	Stock              float64 `json:"stock"`
-	Reorder            float64 `json:"reorder"`
-	LastPrice          float64 `json:"lastPrice"`
-	Currency           string  `json:"currency"`
-	PreferredVendorID  string  `json:"preferredVendorId"`
+	SKU               string  `json:"sku" binding:"required"`
+	Name              string  `json:"name" binding:"required"`
+	Category          string  `json:"category"`
+	Uom               string  `json:"uom"`
+	Stock             float64 `json:"stock"`
+	Reorder           float64 `json:"reorder"`
+	LastPrice         float64 `json:"lastPrice"`
+	Currency          string  `json:"currency"`
+	PreferredVendorID string  `json:"preferredVendorId"`
 }
 
 func (a *API) postItem(c *gin.Context) {
@@ -106,9 +106,10 @@ func (a *API) postBudget(c *gin.Context) {
 }
 
 type postRfqBody struct {
-	Title             string   `json:"title" binding:"required"`
-	DueDate           string   `json:"dueDate"`
-	InvitedVendorIDs  []string `json:"invitedVendorIds"`
+	Title            string   `json:"title" binding:"required"`
+	DueDate          string   `json:"dueDate"`
+	InvitedVendorIDs []string `json:"invitedVendorIds"`
+	RequisitionID    string   `json:"requisitionId"` // optional: source requisition for traceability
 }
 
 func (a *API) postRfq(c *gin.Context) {
@@ -127,7 +128,7 @@ func (a *API) postRfq(c *gin.Context) {
 		return
 	}
 	row, err := a.procurement.CreateRfq(c.Request.Context(),
-		strings.TrimSpace(body.Title), due, body.InvitedVendorIDs, authActorEmail(c))
+		strings.TrimSpace(body.Title), due, body.InvitedVendorIDs, strings.TrimSpace(body.RequisitionID), authActorEmail(c))
 	if mapProcurementErr(c, err) {
 		return
 	}
@@ -136,11 +137,11 @@ func (a *API) postRfq(c *gin.Context) {
 }
 
 type postGrnBody struct {
-	VendorID      string  `json:"vendorId" binding:"required"`
-	PoID          *string `json:"poId"`
-	ReceivedBy    string  `json:"receivedBy"`
-	Status        string  `json:"status"`
-	ReceivedDate  string  `json:"receivedDate"`
+	VendorID     string  `json:"vendorId" binding:"required"`
+	PoID         *string `json:"poId"`
+	ReceivedBy   string  `json:"receivedBy"`
+	Status       string  `json:"status"`
+	ReceivedDate string  `json:"receivedDate"`
 }
 
 func (a *API) postGrn(c *gin.Context) {
@@ -177,12 +178,12 @@ func (a *API) postGrn(c *gin.Context) {
 }
 
 type postInvoiceBody struct {
-	VendorID     string   `json:"vendorId" binding:"required"`
-	PoID         *string  `json:"poId"`
-	Amount       float64  `json:"amount"`
-	Currency     string   `json:"currency"`
-	InvoiceDate  string   `json:"invoiceDate"`
-	InvoiceNo    *string  `json:"invoiceNo"`
+	VendorID    string  `json:"vendorId" binding:"required"`
+	PoID        *string `json:"poId"`
+	Amount      float64 `json:"amount"`
+	Currency    string  `json:"currency"`
+	InvoiceDate string  `json:"invoiceDate"`
+	InvoiceNo   *string `json:"invoiceNo"`
 }
 
 func (a *API) postInvoice(c *gin.Context) {

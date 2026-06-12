@@ -147,7 +147,7 @@ func (p *Procurement) CreateBudget(ctx context.Context, code, period string, all
 }
 
 // CreateRfq inserts an RFQ row and audit trail entry.
-func (p *Procurement) CreateRfq(ctx context.Context, title string, dueDate *time.Time, invited []string, auditUser string) (*models.Rfq, error) {
+func (p *Procurement) CreateRfq(ctx context.Context, title string, dueDate *time.Time, invited []string, requisitionID, auditUser string) (*models.Rfq, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return nil, fmt.Errorf("%w: title is required", ErrInvalidArgument)
@@ -167,9 +167,9 @@ func (p *Procurement) CreateRfq(ctx context.Context, title string, dueDate *time
 	defer tx.Rollback(ctx)
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO rfqs (id, title, status, due_date, created_at, winner_vendor_id, invited_vendor_ids)
-		VALUES ($1,$2,$3,$4,$5,NULL,COALESCE($6::text[], '{}'))`,
-		id, title, status, dueDate, createdDay, invited,
+		INSERT INTO rfqs (id, title, status, due_date, created_at, winner_vendor_id, invited_vendor_ids, requisition_id)
+		VALUES ($1,$2,$3,$4,$5,NULL,COALESCE($6::text[], '{}'),NULLIF($7,''))`,
+		id, title, status, dueDate, createdDay, invited, strings.TrimSpace(requisitionID),
 	); err != nil {
 		return nil, err
 	}

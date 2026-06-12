@@ -11,20 +11,23 @@ import (
 	"time"
 
 	"github.com/alvor-technologies/iag-authclient"
+	platformotel "github.com/alvor-technologies/iag-platform-go/otel"
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"iag-procurement/backend/internal/auditlog"
 	"iag-procurement/backend/internal/cache"
 	"iag-procurement/backend/internal/config"
 	"iag-procurement/backend/internal/consumer"
-	procevents "iag-procurement/backend/internal/events"
 	"iag-procurement/backend/internal/db"
+	procevents "iag-procurement/backend/internal/events"
 	"iag-procurement/backend/internal/handlers"
 	"iag-procurement/backend/internal/iam"
 	"iag-procurement/backend/internal/middleware"
 	"iag-procurement/backend/internal/migrate"
 	"iag-procurement/backend/internal/notifications"
 	"iag-procurement/backend/internal/notifyclient"
+	"iag-procurement/backend/internal/outbox"
 	"iag-procurement/backend/internal/rbac"
 	"iag-procurement/backend/internal/repo"
 	"iag-procurement/backend/internal/signals"
@@ -39,6 +42,20 @@ func main() {
 
 	if os.Getenv("GIN_MODE") == "release" {
 		gin.SetMode(gin.ReleaseMode)
+	}
+
+	// OpenTelemetry → otel-collector:4317 (non-blocking dial).
+	if tp, err := platformotel.Init(ctx, platformotel.Config{
+		ServiceName: cfg.ServiceName,
+		Environment: cfg.Environment,
+	}); err != nil {
+		log.Printf("otel disabled: %v", err)
+	} else {
+		defer func() {
+			sc, c := context.WithTimeout(context.Background(), 5*time.Second)
+			defer c()
+			_ = tp.Shutdown(sc)
+		}()
 	}
 
 	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
@@ -145,6 +162,16 @@ func main() {
 	})
 	defer func() { _ = publisher.Close() }()
 	if cfg.EventBusEnabled && len(cfg.KafkaBrokers) > 0 {
+		// Transactional outbox: requisition approval/rejection events are
+		// enqueued in the status-change tx and drained to Kafka here, so a
+		// broker outage delays delivery instead of dropping events.
+		outboxStore := outbox.NewStore(pool)
+		procurementRepo.SetOutbox(outboxStore)
+		publisher.SetOutbox(outboxStore)
+		go outbox.NewPublisher(outboxStore, publisher).Run(workerCtx)
+		log.Printf("event bus: requisition outbox publisher started")
+	}
+	if cfg.EventBusEnabled && len(cfg.KafkaBrokers) > 0 {
 		commercialConsumer = consumer.NewCommercial(consumer.Config{
 			Brokers: cfg.KafkaBrokers,
 			GroupID: cfg.KafkaConsumerGroup,
@@ -194,6 +221,7 @@ func main() {
 	})
 
 	r := gin.New()
+	r.Use(otelgin.Middleware(cfg.ServiceName))
 	r.Use(gin.Logger(), gin.Recovery())
 
 	api := handlers.NewAPI(handlers.Deps{
