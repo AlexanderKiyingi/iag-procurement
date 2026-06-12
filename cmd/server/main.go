@@ -19,14 +19,15 @@ import (
 	"iag-procurement/backend/internal/cache"
 	"iag-procurement/backend/internal/config"
 	"iag-procurement/backend/internal/consumer"
-	procevents "iag-procurement/backend/internal/events"
 	"iag-procurement/backend/internal/db"
+	procevents "iag-procurement/backend/internal/events"
 	"iag-procurement/backend/internal/handlers"
 	"iag-procurement/backend/internal/iam"
 	"iag-procurement/backend/internal/middleware"
 	"iag-procurement/backend/internal/migrate"
 	"iag-procurement/backend/internal/notifications"
 	"iag-procurement/backend/internal/notifyclient"
+	"iag-procurement/backend/internal/outbox"
 	"iag-procurement/backend/internal/rbac"
 	"iag-procurement/backend/internal/repo"
 	"iag-procurement/backend/internal/signals"
@@ -160,6 +161,16 @@ func main() {
 		Enabled: cfg.EventBusEnabled && len(cfg.KafkaBrokers) > 0,
 	})
 	defer func() { _ = publisher.Close() }()
+	if cfg.EventBusEnabled && len(cfg.KafkaBrokers) > 0 {
+		// Transactional outbox: requisition approval/rejection events are
+		// enqueued in the status-change tx and drained to Kafka here, so a
+		// broker outage delays delivery instead of dropping events.
+		outboxStore := outbox.NewStore(pool)
+		procurementRepo.SetOutbox(outboxStore)
+		publisher.SetOutbox(outboxStore)
+		go outbox.NewPublisher(outboxStore, publisher).Run(workerCtx)
+		log.Printf("event bus: requisition outbox publisher started")
+	}
 	if cfg.EventBusEnabled && len(cfg.KafkaBrokers) > 0 {
 		commercialConsumer = consumer.NewCommercial(consumer.Config{
 			Brokers: cfg.KafkaBrokers,

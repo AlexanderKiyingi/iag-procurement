@@ -3,12 +3,13 @@ package events
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/segmentio/kafka-go"
+
+	"iag-procurement/backend/internal/outbox"
 )
 
 const (
@@ -44,6 +45,36 @@ type platformEvent struct {
 type Publisher struct {
 	writer  *kafka.Writer
 	enabled bool
+	// outbox, when set, makes every emit durable: the event is persisted and
+	// drained to Kafka by the background publisher instead of written inline.
+	outbox *outbox.Store
+}
+
+// SetOutbox routes all emits through the durable outbox. The same store is
+// drained by an outbox.Publisher whose Dispatcher is this Publisher
+// (DispatchOutbox). Nil keeps the legacy direct-write path.
+func (p *Publisher) SetOutbox(store *outbox.Store) {
+	if p != nil {
+		p.outbox = store
+	}
+}
+
+// emit delivers an already-marshaled event envelope: via the durable outbox
+// when configured, else a direct Kafka write. eventType sets the ce-type
+// header; key is the partition key.
+func (p *Publisher) emit(ctx context.Context, eventType, key string, body []byte) error {
+	if p.outbox != nil {
+		return p.outbox.Enqueue(ctx, eventType, key, body)
+	}
+	return p.writer.WriteMessages(ctx, kafka.Message{
+		Topic: TopicCommercial,
+		Key:   []byte(key),
+		Value: body,
+		Headers: []kafka.Header{
+			{Key: "ce-type", Value: []byte(eventType)},
+			{Key: "ce-source", Value: []byte(Source)},
+		},
+	})
 }
 
 // PublisherConfig configures a Publisher.
@@ -78,18 +109,6 @@ func (p *Publisher) Close() error {
 		return nil
 	}
 	return p.writer.Close()
-}
-
-// PublishRequisitionApproved emits procurement.requisition.approved on
-// iag.commercial. workspaceOwnerUserID, when present, lets PM route the event
-// back to the originating workspace.
-func (p *Publisher) PublishRequisitionApproved(ctx context.Context, requisitionID, pmRequisitionID, workspaceOwnerUserID, approvedBy, budgetID string) {
-	p.publishRequisitionOutcome(ctx, TypeRequisitionApproved, requisitionID, pmRequisitionID, workspaceOwnerUserID, approvedBy, budgetID)
-}
-
-// PublishRequisitionRejected emits procurement.requisition.rejected.
-func (p *Publisher) PublishRequisitionRejected(ctx context.Context, requisitionID, pmRequisitionID, workspaceOwnerUserID, rejectedBy, budgetID string) {
-	p.publishRequisitionOutcome(ctx, TypeRequisitionRejected, requisitionID, pmRequisitionID, workspaceOwnerUserID, rejectedBy, budgetID)
 }
 
 // GrnPostedLine is one PO line included in procurement.grn.posted for warehouse intake.
@@ -135,15 +154,7 @@ func (p *Publisher) PublishGrnPosted(ctx context.Context, grnID, poID, vendorID,
 		slog.Warn("procurement grn event marshal", "err", err)
 		return
 	}
-	if err := p.writer.WriteMessages(ctx, kafka.Message{
-		Topic: TopicCommercial,
-		Key:   []byte(grnID),
-		Value: body,
-		Headers: []kafka.Header{
-			{Key: "ce-type", Value: []byte(TypeGrnPosted)},
-			{Key: "ce-source", Value: []byte(Source)},
-		},
-	}); err != nil {
+	if err := p.emit(ctx, TypeGrnPosted, grnID, body); err != nil {
 		slog.Warn("procurement grn event publish", "err", err)
 	}
 }
@@ -177,72 +188,11 @@ func (p *Publisher) PublishInvoiceReceived(ctx context.Context, invoiceNo, vendo
 		slog.Warn("procurement invoice event marshal", "err", err)
 		return
 	}
-	if err := p.writer.WriteMessages(ctx, kafka.Message{
-		Topic: TopicCommercial,
-		Key:   []byte(invoiceNo),
-		Value: body,
-		Headers: []kafka.Header{
-			{Key: "ce-type", Value: []byte(TypeInvoiceReceived)},
-			{Key: "ce-source", Value: []byte(Source)},
-		},
-	}); err != nil {
+	if err := p.emit(ctx, TypeInvoiceReceived, invoiceNo, body); err != nil {
 		slog.Warn("procurement invoice event publish", "err", err)
 	}
 }
 
-func (p *Publisher) publishRequisitionOutcome(ctx context.Context, eventType, requisitionID, pmRequisitionID, workspaceOwnerUserID, actor, budgetID string) {
-	if !p.Enabled() {
-		return
-	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	data := map[string]any{
-		"requisitionId": requisitionID, // procurement-side ID
-		"budgetId":      budgetID,
-	}
-	// pmRequisitionId is what PM cares about — it's PM's local int. Send it as
-	// requisitionId for the PM consumer's convenience, and keep the procurement
-	// id under procurementRequisitionId for traceability.
-	if pmRequisitionID != "" {
-		data["requisitionId"] = pmRequisitionID
-		data["procurementRequisitionId"] = requisitionID
-	}
-	if workspaceOwnerUserID != "" {
-		data["workspaceOwnerUserId"] = workspaceOwnerUserID
-	}
-	switch eventType {
-	case TypeRequisitionApproved:
-		data["approvedBy"] = actor
-		data["approvedAt"] = now
-	case TypeRequisitionRejected:
-		data["rejectedBy"] = actor
-		data["rejectedAt"] = now
-	}
-	evt := platformEvent{
-		ID:          uuid.NewString(),
-		Type:        eventType,
-		Time:        now,
-		Source:      Source,
-		SpecVersion: SpecVersion,
-		Data:        data,
-	}
-	body, err := json.Marshal(evt)
-	if err != nil {
-		slog.Warn("procurement event marshal", "type", eventType, "err", err)
-		return
-	}
-	key := requisitionID
-	if pmRequisitionID != "" {
-		key = pmRequisitionID
-	}
-	if err := p.writer.WriteMessages(ctx, kafka.Message{
-		Topic: TopicCommercial,
-		Key:   []byte(key),
-		Value: body,
-		Headers: []kafka.Header{
-			{Key: "ce-type", Value: []byte(eventType)},
-			{Key: "ce-source", Value: []byte(Source)},
-		},
-	}); err != nil {
-		slog.Warn("procurement event publish", "type", eventType, "err", fmt.Errorf("write: %w", err))
-	}
-}
+// Requisition approval/rejection events are now built by BuildRequisitionOutcome
+// and enqueued transactionally by the repo (see internal/repo/requisition_outcome.go);
+// the legacy direct-publish methods were removed.

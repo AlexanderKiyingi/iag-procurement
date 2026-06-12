@@ -4,6 +4,7 @@ package events
 const (
 	ProcurementAlert   = "procurement.alert"
 	RequisitionPending = "requisition.pending"
+	RequisitionDecided = "requisition.decided"
 )
 
 // Kafka event types consumed from iag.commercial.

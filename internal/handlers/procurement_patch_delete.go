@@ -1,15 +1,27 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"iag-procurement/backend/internal/events"
 	"iag-procurement/backend/internal/models"
-	"iag-procurement/backend/internal/repo"
+	"iag-procurement/backend/internal/signals"
 )
+
+// validRequisitionStatuses is the allowed set for a PATCH status transition.
+var validRequisitionStatuses = map[string]bool{
+	"draft":            true,
+	"pending approval": true,
+	"approved":         true,
+	"rejected":         true,
+	"ordered":          true,
+	"closed":           true,
+}
 
 type patchVendorBody struct {
 	Name     *string  `json:"name"`
@@ -87,6 +99,13 @@ func (a *API) patchRequisition(c *gin.Context) {
 		return
 	}
 
+	// Reject unknown status values so a typo can't silently no-op the
+	// downstream approval flow (only "approved"/"rejected" trigger events).
+	if body.Status != nil && !validRequisitionStatuses[strings.ToLower(strings.TrimSpace(*body.Status))] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status; allowed: draft, pending approval, approved, rejected, ordered, closed"})
+		return
+	}
+
 	var neededPtr **time.Time
 	if body.NeededBy != nil {
 		s := strings.TrimSpace(*body.NeededBy)
@@ -128,32 +147,21 @@ func (a *API) patchRequisition(c *gin.Context) {
 	c.JSON(http.StatusOK, row)
 }
 
-// emitRequisitionStatusChange publishes procurement.requisition.approved or
-// .rejected on iag.commercial when a PATCH transitions to a terminal status.
-// PM-imported requisitions carry workspaceOwnerUserId so the originating PM
-// workspace can be located by the consumer. Best-effort — never fails the HTTP
-// response.
+// emitRequisitionStatusChange raises an in-app signal when a PATCH transitions a
+// requisition to a terminal status, so the requester is notified in-app. The
+// DURABLE cross-service Kafka event (procurement.requisition.approved/.rejected)
+// is now enqueued transactionally by the repo via the outbox — this is only the
+// best-effort in-app companion and never fails the HTTP response.
 func (a *API) emitRequisitionStatusChange(c *gin.Context, row *models.Requisition, status string) {
-	if a.publisher == nil || !a.publisher.Enabled() || row == nil {
+	if a.bus == nil || row == nil {
 		return
 	}
 	outcome := strings.ToLower(strings.TrimSpace(status))
 	if outcome != "approved" && outcome != "rejected" {
 		return
 	}
-	link, err := a.procurement.GetPMLink(c.Request.Context(), row.ID)
-	if err != nil {
-		// Failed lookup shouldn't block the publish — still emit with the
-		// procurement id, just without PM routing.
-		link = repo.PMLink{}
-	}
-	actor := authActorEmail(c)
-	switch outcome {
-	case "approved":
-		a.publisher.PublishRequisitionApproved(c.Request.Context(), row.ID, link.PMRequisitionID, link.PMWorkspaceOwner, actor, row.BudgetID)
-	case "rejected":
-		a.publisher.PublishRequisitionRejected(c.Request.Context(), row.ID, link.PMRequisitionID, link.PMWorkspaceOwner, actor, row.BudgetID)
-	}
+	body, _ := json.Marshal(map[string]string{"id": row.ID, "title": row.Title, "status": outcome})
+	_ = a.bus.Emit(c.Request.Context(), signals.Event{Name: events.RequisitionDecided, Payload: body})
 }
 
 func (a *API) deleteRequisition(c *gin.Context) {
@@ -169,4 +177,3 @@ func (a *API) deleteRequisition(c *gin.Context) {
 	a.InvalidateSeedCache(c.Request.Context())
 	c.Status(http.StatusNoContent)
 }
-

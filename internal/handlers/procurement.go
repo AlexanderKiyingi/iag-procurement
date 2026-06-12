@@ -25,12 +25,13 @@ type postRequisitionBody struct {
 }
 
 type postPurchaseOrderBody struct {
-	VendorID     string          `json:"vendorId" binding:"required"`
-	Title        string          `json:"title" binding:"required"`
-	BudgetID     string          `json:"budgetId" binding:"required"`
-	Currency     string          `json:"currency"`
-	ExpectedDate string          `json:"expectedDate"`
-	Items        []models.PoLine `json:"items" binding:"required,min=1"`
+	VendorID      string          `json:"vendorId" binding:"required"`
+	Title         string          `json:"title" binding:"required"`
+	BudgetID      string          `json:"budgetId" binding:"required"`
+	Currency      string          `json:"currency"`
+	ExpectedDate  string          `json:"expectedDate"`
+	RequisitionID string          `json:"requisitionId"` // optional: source requisition for traceability
+	Items         []models.PoLine `json:"items" binding:"required,min=1"`
 }
 
 func authActorEmail(c *gin.Context) string {
@@ -129,6 +130,7 @@ func (a *API) postPurchaseOrder(c *gin.Context) {
 		strings.TrimSpace(body.Title),
 		body.Currency,
 		strings.TrimSpace(body.BudgetID),
+		strings.TrimSpace(body.RequisitionID),
 		ex,
 		body.Items,
 		authActorEmail(c),

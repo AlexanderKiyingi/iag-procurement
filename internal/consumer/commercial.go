@@ -18,6 +18,10 @@ import (
 
 const pmRequisitionSubmitted = "pm.requisition.submitted"
 
+// maxHandleAttempts bounds in-process retries before a message is parked in the
+// DLQ so a poison message can't block the partition forever.
+const maxHandleAttempts = 5
+
 type Config struct {
 	Brokers []string
 	GroupID string
@@ -52,6 +56,8 @@ type Commercial struct {
 	reader      *kafka.Reader
 	procurement *repo.Procurement
 	bus         *signals.Bus
+	dlq         *kafka.Writer
+	dlqTopic    string
 }
 
 func NewCommercial(cfg Config, procurement *repo.Procurement, bus *signals.Bus) *Commercial {
@@ -62,11 +68,24 @@ func NewCommercial(cfg Config, procurement *repo.Procurement, bus *signals.Bus) 
 		MinBytes: 1,
 		MaxBytes: 10e6,
 	})
-	return &Commercial{reader: reader, procurement: procurement, bus: bus}
+	c := &Commercial{reader: reader, procurement: procurement, bus: bus}
+	// Dead-letter topic for messages that fail every retry, so a poison message
+	// is parked for inspection instead of silently dropped or blocking the
+	// partition.
+	if len(cfg.Brokers) > 0 {
+		c.dlqTopic = cfg.Topic + ".dlq"
+		c.dlq = &kafka.Writer{
+			Addr:         kafka.TCP(cfg.Brokers...),
+			Topic:        c.dlqTopic,
+			Balancer:     &kafka.LeastBytes{},
+			RequiredAcks: kafka.RequireAll,
+		}
+	}
+	return c
 }
 
 func (c *Commercial) Run(ctx context.Context) error {
-	log.Printf("procurement commercial consumer started topic=%s group=%s", c.reader.Config().Topic, c.reader.Config().GroupID)
+	log.Printf("procurement commercial consumer started topic=%s group=%s dlq=%s", c.reader.Config().Topic, c.reader.Config().GroupID, c.dlqTopic)
 	for {
 		msg, err := c.reader.FetchMessage(ctx)
 		if err != nil {
@@ -77,19 +96,73 @@ func (c *Commercial) Run(ctx context.Context) error {
 			time.Sleep(time.Second)
 			continue
 		}
-		if err := c.handleMessage(ctx, msg.Value); err != nil {
-			log.Printf("procurement consumer handle: %v", err)
-		} else if err := c.reader.CommitMessages(ctx, msg); err != nil {
+
+		// Bounded in-process retry. On exhaustion, route to the DLQ and commit
+		// so the partition advances; if the DLQ write itself fails, do NOT
+		// commit — prefer reprocessing on restart over losing the message.
+		var handleErr error
+		for attempt := 1; attempt <= maxHandleAttempts; attempt++ {
+			if handleErr = c.handleMessage(ctx, msg.Value); handleErr == nil {
+				break
+			}
+			if ctx.Err() != nil {
+				return nil
+			}
+			log.Printf("procurement consumer handle attempt %d/%d: %v", attempt, maxHandleAttempts, handleErr)
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(time.Duration(attempt) * time.Second):
+			}
+		}
+		if handleErr != nil {
+			if !c.deadLetter(ctx, msg, handleErr) {
+				// DLQ unavailable — leave uncommitted so we retry after restart.
+				continue
+			}
+		}
+		if err := c.reader.CommitMessages(ctx, msg); err != nil {
 			log.Printf("procurement consumer commit: %v", err)
 		}
 	}
 }
 
-func (c *Commercial) Close() error {
-	if c.reader == nil {
-		return nil
+// deadLetter publishes a failed message to the DLQ topic with the failure
+// reason in a header. Returns false if the DLQ write failed (or no DLQ wired).
+func (c *Commercial) deadLetter(ctx context.Context, msg kafka.Message, cause error) bool {
+	if c.dlq == nil {
+		log.Printf("procurement consumer: no DLQ configured, dropping message after %d attempts: %v", maxHandleAttempts, cause)
+		return true // commit anyway — matches prior best-effort behavior
 	}
-	return c.reader.Close()
+	err := c.dlq.WriteMessages(ctx, kafka.Message{
+		Key:   msg.Key,
+		Value: msg.Value,
+		Headers: append(msg.Headers,
+			kafka.Header{Key: "x-dlq-reason", Value: []byte(cause.Error())},
+			kafka.Header{Key: "x-dlq-source-topic", Value: []byte(c.reader.Config().Topic)},
+		),
+	})
+	if err != nil {
+		log.Printf("procurement consumer DLQ publish failed: %v", err)
+		return false
+	}
+	log.Printf("procurement consumer: message routed to DLQ %s after %d attempts: %v", c.dlqTopic, maxHandleAttempts, cause)
+	return true
+}
+
+func (c *Commercial) Close() error {
+	var firstErr error
+	if c.dlq != nil {
+		if err := c.dlq.Close(); err != nil {
+			firstErr = err
+		}
+	}
+	if c.reader != nil {
+		if err := c.reader.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (c *Commercial) handleMessage(ctx context.Context, payload []byte) error {
@@ -104,6 +177,16 @@ func (c *Commercial) handleMessage(ctx context.Context, payload []byte) error {
 }
 
 func (c *Commercial) handlePMRequisition(ctx context.Context, evt PlatformEvent) error {
+	// Idempotency: skip events already handled (redelivery after rebalance or
+	// no-DLQ retry). Belt-and-suspenders alongside the unique pm_requisition_id.
+	if evt.ID != "" {
+		if done, err := c.procurement.IsEventProcessed(ctx, evt.ID); err != nil {
+			return err
+		} else if done {
+			return nil
+		}
+	}
+
 	var data pmRequisitionData
 	if err := json.Unmarshal(evt.Data, &data); err != nil {
 		return err
@@ -111,7 +194,7 @@ func (c *Commercial) handlePMRequisition(ctx context.Context, evt PlatformEvent)
 	pmID := strings.TrimSpace(data.RequisitionID)
 	title := strings.TrimSpace(data.Title)
 	if pmID == "" || title == "" {
-		return nil
+		return c.procurement.MarkEventProcessed(ctx, evt.ID) // malformed but not retryable
 	}
 
 	total, _ := strconv.ParseFloat(strings.TrimSpace(data.Amount), 64)
@@ -137,10 +220,12 @@ func (c *Commercial) handlePMRequisition(ctx context.Context, evt PlatformEvent)
 		total,
 		strings.TrimSpace(data.Currency),
 		budgetID,
+		strings.TrimSpace(data.Payee),
+		strings.TrimSpace(data.Justification),
 		evt.ID,
 	)
 	if errors.Is(err, repo.ErrPMRequisitionExists) {
-		return nil
+		return c.procurement.MarkEventProcessed(ctx, evt.ID)
 	}
 	if err != nil {
 		return err
@@ -151,7 +236,7 @@ func (c *Commercial) handlePMRequisition(ctx context.Context, evt PlatformEvent)
 		_ = c.bus.Emit(ctx, signals.Event{Name: events.RequisitionPending, Payload: body})
 	}
 	log.Printf("procurement: imported PM requisition pmId=%s -> %s", pmID, row.ID)
-	return nil
+	return c.procurement.MarkEventProcessed(ctx, evt.ID)
 }
 
 func mapPMUrgency(u string) string {

@@ -185,22 +185,43 @@ func (p *Procurement) UpdateRequisition(
 	}
 
 	var (
-		createdAt time.Time
-		needed    *time.Time
+		createdAt       time.Time
+		needed          *time.Time
+		pmReqID         *string
+		pmOwner         *string
+		budgetCommitted bool
 	)
 	out := models.Requisition{}
 	if err := tx.QueryRow(ctx, `
-		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id
+		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id,
+		       pm_requisition_id, pm_workspace_owner, budget_committed
 		FROM requisitions WHERE id = $1`, id,
 	).Scan(
 		&out.ID, &out.Title, &out.Dept, &out.Requester, &out.Priority, &out.Status,
 		&createdAt, &needed, &out.Total, &out.Currency, &out.BudgetID,
+		&pmReqID, &pmOwner, &budgetCommitted,
 	); err != nil {
 		return nil, err
 	}
 	out.CreatedAt = createdAt.UTC().Format("2006-01-02")
 	if needed != nil {
 		out.NeededBy = needed.UTC().Format("2006-01-02")
+	}
+
+	// On a terminal status transition: (1) encumber/release the budget
+	// idempotently and (2) enqueue the outcome event in THIS transaction, so the
+	// status change, the budget movement, and the cross-service notification all
+	// commit atomically (or roll back together).
+	if status != nil {
+		outcome := strings.ToLower(strings.TrimSpace(*status))
+		if outcome == "approved" || outcome == "rejected" {
+			if err := p.applyBudgetCommitment(ctx, tx, out.ID, outcome, budgetCommitted, out.BudgetID, out.Total); err != nil {
+				return nil, err
+			}
+			if err := p.enqueueRequisitionOutcome(ctx, tx, outcome, out.ID, deref(pmReqID), deref(pmOwner), auditUser, out.BudgetID); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -240,4 +261,3 @@ func (p *Procurement) DeleteRequisition(ctx context.Context, id string, auditUse
 	}
 	return tx.Commit(ctx)
 }
-
