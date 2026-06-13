@@ -18,6 +18,10 @@ import (
 
 const pmRequisitionSubmitted = "pm.requisition.submitted"
 
+// govRequisitionApproved is emitted by iag-contract-management when a governance
+// requisition completes its approval chain — procurement imports it for sourcing.
+const govRequisitionApproved = "contracts.requisition.approved"
+
 // maxHandleAttempts bounds in-process retries before a message is parked in the
 // DLQ so a poison message can't block the partition forever.
 const maxHandleAttempts = 5
@@ -170,10 +174,66 @@ func (c *Commercial) handleMessage(ctx context.Context, payload []byte) error {
 	if err := json.Unmarshal(payload, &evt); err != nil {
 		return err
 	}
-	if evt.Type != pmRequisitionSubmitted {
+	switch evt.Type {
+	case pmRequisitionSubmitted:
+		return c.handlePMRequisition(ctx, evt)
+	case govRequisitionApproved:
+		return c.handleGovRequisitionApproved(ctx, evt)
+	default:
 		return nil
 	}
-	return c.handlePMRequisition(ctx, evt)
+}
+
+type govRequisitionData struct {
+	RequisitionID     string  `json:"requisitionId"`
+	No                string  `json:"no"`
+	Title             string  `json:"title"`
+	Estimate          float64 `json:"estimate"`
+	Supplier          string  `json:"supplier"`
+	ProcurementMethod string  `json:"procurementMethod"`
+	BudgetCode        string  `json:"budgetCode"`
+	Department        string  `json:"department"`
+}
+
+// handleGovRequisitionApproved imports an approved contract-management governance
+// requisition into procurement (idempotent on its requisition number).
+func (c *Commercial) handleGovRequisitionApproved(ctx context.Context, evt PlatformEvent) error {
+	if evt.ID != "" {
+		if done, err := c.procurement.IsEventProcessed(ctx, evt.ID); err != nil {
+			return err
+		} else if done {
+			return nil
+		}
+	}
+	var data govRequisitionData
+	if err := json.Unmarshal(evt.Data, &data); err != nil {
+		return err
+	}
+	key := strings.TrimSpace(data.No)
+	if key == "" {
+		key = strings.TrimSpace(data.RequisitionID)
+	}
+	title := strings.TrimSpace(data.Title)
+	if key == "" || title == "" || data.Estimate <= 0 {
+		return c.procurement.MarkEventProcessed(ctx, evt.ID) // malformed but not retryable
+	}
+	dept := strings.TrimSpace(data.Department)
+	budgetID, err := c.procurement.ResolveBudgetForDept(ctx, dept)
+	if err != nil {
+		return err
+	}
+	row, err := c.procurement.ImportPMRequisition(
+		ctx, key, "", title, dept, "", "Medium", "Approved",
+		data.Estimate, "UGX", budgetID, strings.TrimSpace(data.Supplier), "", evt.ID,
+	)
+	if errors.Is(err, repo.ErrPMRequisitionExists) {
+		return c.procurement.MarkEventProcessed(ctx, evt.ID)
+	}
+	if err != nil {
+		return err
+	}
+	log.Printf("procurement: imported governance requisition %s -> %s", key, row.ID)
+	return c.procurement.MarkEventProcessed(ctx, evt.ID)
 }
 
 func (c *Commercial) handlePMRequisition(ctx context.Context, evt PlatformEvent) error {
