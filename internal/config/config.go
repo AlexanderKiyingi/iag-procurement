@@ -61,6 +61,12 @@ type Config struct {
 	JWTIssuer string
 	JWKSURL   string
 	Audience  string
+
+	// ApprovalThreshold is the PO total at/above which a purchase order is
+	// created as "Pending Approval"; below it the PO is auto-"Approved" (and an
+	// awarded RFQ becomes an approved draft PO). 0 (the default) means every PO
+	// requires approval. Set via PROCUREMENT_APPROVAL_THRESHOLD.
+	ApprovalThreshold float64
 }
 
 func Load() (*Config, error) {
@@ -140,6 +146,8 @@ func Load() (*Config, error) {
 		JWTIssuer: getenv("JWT_ISSUER", "http://localhost:3001"),
 		JWKSURL:   getenv("JWKS_URL", "http://127.0.0.1:3001/.well-known/jwks.json"),
 		Audience:  getenv("AUDIENCE", "iag.procurement"),
+
+		ApprovalThreshold: parseFloat(os.Getenv("PROCUREMENT_APPROVAL_THRESHOLD"), 0),
 	}
 
 	if c.DatabaseURL == "" {
@@ -208,6 +216,18 @@ func getenv(k, def string) string {
 		return v
 	}
 	return def
+}
+
+func parseFloat(s string, def float64) float64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return def
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return def
+	}
+	return v
 }
 
 func parseBrokers(raw string) []string {

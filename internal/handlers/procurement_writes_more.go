@@ -1,10 +1,8 @@
 package handlers
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -172,7 +170,8 @@ func (a *API) postGrn(c *gin.Context) {
 	if mapProcurementErr(c, err) {
 		return
 	}
-	a.emitGrnPostedIfNeeded(c.Request.Context(), row)
+	// GRN-posted event (when status=="Posted") is enqueued transactionally by
+	// the repo via the outbox; no post-commit emit here.
 	a.InvalidateSeedCache(c.Request.Context())
 	c.JSON(http.StatusCreated, row)
 }
@@ -214,24 +213,8 @@ func (a *API) postInvoice(c *gin.Context) {
 	if mapProcurementErr(c, err) {
 		return
 	}
-	if a.publisher != nil && row != nil {
-		docRef := row.ID
-		if row.InvoiceNo != nil && strings.TrimSpace(*row.InvoiceNo) != "" {
-			docRef = strings.TrimSpace(*row.InvoiceNo)
-		}
-		currency := row.Currency
-		if currency == "" {
-			currency = "UGX"
-		}
-		var due *time.Time
-		if row.InvoiceDate != "" {
-			if t, err := time.Parse("2006-01-02", row.InvoiceDate); err == nil {
-				due = &t
-			}
-		}
-		a.publisher.PublishInvoiceReceived(c.Request.Context(), docRef, row.VendorID,
-			fmt.Sprintf("%.2f", row.Amount), currency, due)
-	}
+	// invoice.received event (for iag-finance AP) is enqueued transactionally by
+	// the repo via the outbox; no post-commit emit here.
 	a.InvalidateSeedCache(c.Request.Context())
 	c.JSON(http.StatusCreated, row)
 }

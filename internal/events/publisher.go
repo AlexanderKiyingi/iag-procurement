@@ -1,15 +1,7 @@
 package events
 
 import (
-	"context"
-	"encoding/json"
-	"log/slog"
-	"time"
-
-	"github.com/google/uuid"
 	"github.com/segmentio/kafka-go"
-
-	"iag-procurement/backend/internal/outbox"
 )
 
 const (
@@ -40,41 +32,14 @@ type platformEvent struct {
 	Data          map[string]any `json:"data"`
 }
 
-// Publisher emits procurement domain events to iag.commercial. Disabled
-// publishers are safe no-ops so callers don't need to guard every emit.
+// Publisher is the Kafka-facing side of the procurement event pipeline: it
+// drains the transactional outbox to iag.commercial via DispatchOutbox (see
+// outbox_bridge.go). Domain events are built by the Build* helpers and enqueued
+// in the writing transaction by the repo, so there is no direct, non-atomic
+// emit path. A disabled publisher is a safe no-op.
 type Publisher struct {
 	writer  *kafka.Writer
 	enabled bool
-	// outbox, when set, makes every emit durable: the event is persisted and
-	// drained to Kafka by the background publisher instead of written inline.
-	outbox *outbox.Store
-}
-
-// SetOutbox routes all emits through the durable outbox. The same store is
-// drained by an outbox.Publisher whose Dispatcher is this Publisher
-// (DispatchOutbox). Nil keeps the legacy direct-write path.
-func (p *Publisher) SetOutbox(store *outbox.Store) {
-	if p != nil {
-		p.outbox = store
-	}
-}
-
-// emit delivers an already-marshaled event envelope: via the durable outbox
-// when configured, else a direct Kafka write. eventType sets the ce-type
-// header; key is the partition key.
-func (p *Publisher) emit(ctx context.Context, eventType, key string, body []byte) error {
-	if p.outbox != nil {
-		return p.outbox.Enqueue(ctx, eventType, key, body)
-	}
-	return p.writer.WriteMessages(ctx, kafka.Message{
-		Topic: TopicCommercial,
-		Key:   []byte(key),
-		Value: body,
-		Headers: []kafka.Header{
-			{Key: "ce-type", Value: []byte(eventType)},
-			{Key: "ce-source", Value: []byte(Source)},
-		},
-	})
 }
 
 // PublisherConfig configures a Publisher.
@@ -117,82 +82,8 @@ type GrnPostedLine struct {
 	Qty float64 `json:"qty"`
 	UOM string  `json:"uom"`
 }
-
-// PublishGrnPosted notifies iag-warehouse to create a draft goods receipt.
-func (p *Publisher) PublishGrnPosted(ctx context.Context, grnID, poID, vendorID, receivedBy string, lines []GrnPostedLine) {
-	if !p.Enabled() || grnID == "" {
-		return
-	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	data := map[string]any{
-		"grn_id":      grnID,
-		"po_id":       poID,
-		"vendor_id":   vendorID,
-		"received_by": receivedBy,
-	}
-	if len(lines) > 0 {
-		raw := make([]map[string]any, 0, len(lines))
-		for _, l := range lines {
-			uom := l.UOM
-			if uom == "" {
-				uom = "ea"
-			}
-			raw = append(raw, map[string]any{"sku": l.SKU, "qty": l.Qty, "uom": uom})
-		}
-		data["lines"] = raw
-	}
-	evt := platformEvent{
-		ID:          uuid.NewString(),
-		Type:        TypeGrnPosted,
-		Time:        now,
-		Source:      Source,
-		SpecVersion: SpecVersion,
-		Data:        data,
-	}
-	body, err := json.Marshal(evt)
-	if err != nil {
-		slog.Warn("procurement grn event marshal", "err", err)
-		return
-	}
-	if err := p.emit(ctx, TypeGrnPosted, grnID, body); err != nil {
-		slog.Warn("procurement grn event publish", "err", err)
-	}
-}
-
-// PublishInvoiceReceived notifies iag-finance to create an AP open item.
-func (p *Publisher) PublishInvoiceReceived(ctx context.Context, invoiceNo, vendorRef, amount, currency string, dueDate *time.Time) {
-	if !p.Enabled() || invoiceNo == "" || amount == "" {
-		return
-	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	data := map[string]any{
-		"documentRef": invoiceNo,
-		"vendorRef":   vendorRef,
-		"amount":      amount,
-		"currency":    currency,
-		"description": "Procurement vendor invoice",
-	}
-	if dueDate != nil {
-		data["dueDate"] = dueDate.Format("2006-01-02")
-	}
-	evt := platformEvent{
-		ID:          uuid.NewString(),
-		Type:        TypeInvoiceReceived,
-		Time:        now,
-		Source:      Source,
-		SpecVersion: SpecVersion,
-		Data:        data,
-	}
-	body, err := json.Marshal(evt)
-	if err != nil {
-		slog.Warn("procurement invoice event marshal", "err", err)
-		return
-	}
-	if err := p.emit(ctx, TypeInvoiceReceived, invoiceNo, body); err != nil {
-		slog.Warn("procurement invoice event publish", "err", err)
-	}
-}
-
-// Requisition approval/rejection events are now built by BuildRequisitionOutcome
-// and enqueued transactionally by the repo (see internal/repo/requisition_outcome.go);
-// the legacy direct-publish methods were removed.
+// All procurement domain events (requisition approval/rejection, invoice
+// received, GRN posted) are built by the Build* helpers in outbox_bridge.go and
+// enqueued transactionally by the repo, then drained here by DispatchOutbox.
+// The legacy direct-publish methods were removed so no event can be lost to a
+// post-commit crash or a broker outage.

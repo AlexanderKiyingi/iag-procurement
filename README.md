@@ -36,6 +36,25 @@ From the meta-repo: `docker compose -f deploy/docker-compose.yml up procurement`
 
 Requires `platform_user_id` on the vendor row (set during supplier invite/onboarding).
 
+## Procurement controls
+
+- **PO approval workflow.** POs are created `Pending Approval` (or `Approved` when the total is below `PROCUREMENT_APPROVAL_THRESHOLD`). Approve/reject via `PATCH /purchase-orders/:id` with a `status`. Goods can only be received against a PO that has cleared approval.
+- **Segregation of duties.** The user who created a requisition/PO cannot approve it (HTTP 403).
+- **Budget lifecycle.** Approving a requisition encumbers its total (`committed`) and is rejected if it would exceed the budget. Posting the first GRN for a PO converts the encumbrance to actual spend (`committed → spent`, once per PO).
+- **Three-way match.** New invoices get a `matchStatus` of `No PO` / `Pending GRN` / `Matched` / `Amount variance` from the linked PO and goods receipt.
+
+### RFQ → quote → award
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/rfqs/:id/quotes` | List buyer-recorded vendor quotes |
+| POST | `/rfqs/:id/quotes` | Record a vendor quote `{vendorId, amount, currency, notes}` |
+| POST | `/rfqs/:id/award` | Award `{quoteId\|vendorId, budgetId?, expectedDate?}` → marks the RFQ `Awarded` and creates a draft PO from the winning quote |
+
+### List pagination (opt-in, backward compatible)
+
+`/vendors`, `/items`, `/requisitions`, `/purchase-orders`, and `/invoices` return the full array by default; pass any of `?limit` (≤500), `?offset`, or `?q` to page/filter from the DB instead.
+
 ## Event bus
 
 | Direction | Topic | Purpose |

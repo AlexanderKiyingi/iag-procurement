@@ -66,6 +66,18 @@ type Rfq struct {
 	InvitedVendors  []string `json:"invitedVendors"`
 }
 
+// RfqQuote is a buyer-recorded vendor quote against an RFQ.
+type RfqQuote struct {
+	ID        string  `json:"id"`
+	RfqID     string  `json:"rfqId"`
+	VendorID  string  `json:"vendorId"`
+	Amount    float64 `json:"amount"`
+	Currency  string  `json:"currency"`
+	Notes     string  `json:"notes"`
+	CreatedAt string  `json:"createdAt"`
+	CreatedBy string  `json:"createdBy"`
+}
+
 type PoLine struct {
 	ItemID string  `json:"itemId"`
 	Qty    float64 `json:"qty"`

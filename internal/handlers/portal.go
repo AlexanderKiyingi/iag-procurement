@@ -82,21 +82,21 @@ func (a *API) PortalInvoices(c *gin.Context) {
 		return
 	}
 	rows, err := a.pool.Query(c.Request.Context(), `
-		SELECT id, invoice_no, total, currency, status, due_date::text
-		FROM invoices WHERE vendor_id = $1 ORDER BY due_date DESC LIMIT 50`, vendorID)
+		SELECT id, COALESCE(invoice_no, ''), amount, currency, status, COALESCE(invoice_date::text, '')
+		FROM invoices WHERE vendor_id = $1 ORDER BY invoice_date DESC LIMIT 50`, vendorID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list invoices"})
 		return
 	}
 	defer rows.Close()
 	type inv struct {
-		ID, InvoiceNo, Currency, Status, DueDate string
-		Total                                      float64
+		ID, InvoiceNo, Currency, Status, InvoiceDate string
+		Amount                                       float64
 	}
 	var list []inv
 	for rows.Next() {
 		var i inv
-		if err := rows.Scan(&i.ID, &i.InvoiceNo, &i.Total, &i.Currency, &i.Status, &i.DueDate); err != nil {
+		if err := rows.Scan(&i.ID, &i.InvoiceNo, &i.Amount, &i.Currency, &i.Status, &i.InvoiceDate); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}

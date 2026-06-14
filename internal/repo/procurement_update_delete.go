@@ -215,6 +215,11 @@ func (p *Procurement) UpdateRequisition(
 	if status != nil {
 		outcome := strings.ToLower(strings.TrimSpace(*status))
 		if outcome == "approved" || outcome == "rejected" {
+			// Segregation of duties: the requester may not approve their own
+			// requisition (rejection/withdrawal by the requester is allowed).
+			if outcome == "approved" && sameActor(auditUser, out.Requester) {
+				return nil, fmt.Errorf("%w: requester cannot approve their own requisition", ErrForbidden)
+			}
 			if err := p.applyBudgetCommitment(ctx, tx, out.ID, outcome, budgetCommitted, out.BudgetID, out.Total); err != nil {
 				return nil, err
 			}

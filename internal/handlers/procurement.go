@@ -65,6 +65,10 @@ func mapProcurementErr(c *gin.Context, err error) bool {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return true
 	}
+	if errors.Is(err, repo.ErrForbidden) {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return true
+	}
 	var pe *pgconn.PgError
 	if errors.As(err, &pe) && pe.Code == "23503" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid reference (budget, vendor, or item)", "detail": pe.Message})

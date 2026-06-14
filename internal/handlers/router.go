@@ -104,6 +104,7 @@ func (a *API) Mount(r *gin.Engine) {
 				data.GET("/budgets", a.listBudgets)
 				data.GET("/requisitions", a.listRequisitions)
 				data.GET("/rfqs", a.listRfqs)
+				data.GET("/rfqs/:id/quotes", a.listRfqQuotes)
 				data.GET("/purchase-orders", a.listPOs)
 				data.GET("/orders", a.listPOs)
 				data.GET("/grns", a.listGrns)
@@ -132,6 +133,8 @@ func (a *API) Mount(r *gin.Engine) {
 			mut.POST("/rfqs", middleware.RequirePermission(rbac.AddRfq), a.postRfq)
 			mut.PATCH("/rfqs/:id", middleware.RequirePermission(rbac.ChangeRfq), a.patchRfq)
 			mut.DELETE("/rfqs/:id", middleware.RequirePermission(rbac.DeleteRfq), a.deleteRfq)
+			mut.POST("/rfqs/:id/quotes", middleware.RequirePermission(rbac.ChangeRfq), a.postRfqQuote)
+			mut.POST("/rfqs/:id/award", middleware.RequirePermission(rbac.ChangeRfq), a.awardRfq)
 			mut.POST("/grns", middleware.RequirePermission(rbac.AddGrn), a.postGrn)
 			mut.PATCH("/grns/:id", middleware.RequirePermission(rbac.ChangeGrn), a.patchGrn)
 			mut.DELETE("/grns/:id", middleware.RequirePermission(rbac.DeleteGrn), a.deleteGrn)
@@ -267,6 +270,14 @@ func (a *API) getSeed(c *gin.Context) {
 }
 
 func (a *API) listVendors(c *gin.Context) {
+	if limit, offset, q, ok := parsePage(c); ok && a.procurement != nil {
+		rows, err := a.procurement.ListVendors(c.Request.Context(), limit, offset, q)
+		if mapProcurementErr(c, err) {
+			return
+		}
+		c.JSON(http.StatusOK, rows)
+		return
+	}
 	d, ok := a.loadCached(c)
 	if !ok {
 		return
@@ -275,6 +286,14 @@ func (a *API) listVendors(c *gin.Context) {
 }
 
 func (a *API) listItems(c *gin.Context) {
+	if limit, offset, q, ok := parsePage(c); ok && a.procurement != nil {
+		rows, err := a.procurement.ListItems(c.Request.Context(), limit, offset, q)
+		if mapProcurementErr(c, err) {
+			return
+		}
+		c.JSON(http.StatusOK, rows)
+		return
+	}
 	d, ok := a.loadCached(c)
 	if !ok {
 		return
@@ -291,6 +310,14 @@ func (a *API) listBudgets(c *gin.Context) {
 }
 
 func (a *API) listRequisitions(c *gin.Context) {
+	if limit, offset, q, ok := parsePage(c); ok && a.procurement != nil {
+		rows, err := a.procurement.ListRequisitions(c.Request.Context(), limit, offset, q)
+		if mapProcurementErr(c, err) {
+			return
+		}
+		c.JSON(http.StatusOK, rows)
+		return
+	}
 	d, ok := a.loadCached(c)
 	if !ok {
 		return
@@ -307,6 +334,14 @@ func (a *API) listRfqs(c *gin.Context) {
 }
 
 func (a *API) listPOs(c *gin.Context) {
+	if limit, offset, q, ok := parsePage(c); ok && a.procurement != nil {
+		rows, err := a.procurement.ListPurchaseOrders(c.Request.Context(), limit, offset, q)
+		if mapProcurementErr(c, err) {
+			return
+		}
+		c.JSON(http.StatusOK, rows)
+		return
+	}
 	d, ok := a.loadCached(c)
 	if !ok {
 		return
@@ -323,6 +358,14 @@ func (a *API) listGrns(c *gin.Context) {
 }
 
 func (a *API) listInvoices(c *gin.Context) {
+	if limit, offset, q, ok := parsePage(c); ok && a.procurement != nil {
+		rows, err := a.procurement.ListInvoices(c.Request.Context(), limit, offset, q)
+		if mapProcurementErr(c, err) {
+			return
+		}
+		c.JSON(http.StatusOK, rows)
+		return
+	}
 	d, ok := a.loadCached(c)
 	if !ok {
 		return

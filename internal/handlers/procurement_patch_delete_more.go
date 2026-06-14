@@ -360,6 +360,18 @@ type patchPoBody struct {
 	Items        *[]models.PoLine `json:"items"`      // if present: replace all lines and recompute total
 }
 
+// validPoStatuses is the allowed set for a PATCH status transition on a PO.
+var validPoStatuses = map[string]bool{
+	"draft":            true,
+	"pending approval": true,
+	"approved":         true,
+	"rejected":         true,
+	"ordered":          true,
+	"received":         true,
+	"closed":           true,
+	"cancelled":        true,
+}
+
 func (a *API) patchPurchaseOrder(c *gin.Context) {
 	if a.procurement == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "procurement writes not configured"})
@@ -369,6 +381,10 @@ func (a *API) patchPurchaseOrder(c *gin.Context) {
 	var body patchPoBody
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if body.Status != nil && !validPoStatuses[strings.ToLower(strings.TrimSpace(*body.Status))] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status; allowed: draft, pending approval, approved, rejected, ordered, received, closed, cancelled"})
 		return
 	}
 	var exPtr **time.Time
@@ -475,7 +491,8 @@ func (a *API) patchGrn(c *gin.Context) {
 	if mapProcurementErr(c, err) {
 		return
 	}
-	a.emitGrnPostedIfNeeded(c.Request.Context(), row)
+	// GRN-posted event (when the patch leaves status=="Posted") is enqueued
+	// transactionally by the repo via the outbox; no post-commit emit here.
 	a.InvalidateSeedCache(c.Request.Context())
 	c.JSON(http.StatusOK, row)
 }

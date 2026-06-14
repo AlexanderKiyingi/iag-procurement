@@ -15,14 +15,29 @@ import (
 )
 
 type Procurement struct {
-	pool   *pgxpool.Pool
-	outbox *outbox.Store
+	pool              *pgxpool.Pool
+	outbox            *outbox.Store
+	approvalThreshold float64
 }
 
 // SetOutbox wires the transactional outbox so requisition approval/rejection
 // events are enqueued atomically with the status change and drained to Kafka by
 // a background publisher. Nil leaves outbound events un-emitted (e.g. tests).
 func (p *Procurement) SetOutbox(store *outbox.Store) { p.outbox = store }
+
+// SetApprovalThreshold sets the PO total at/above which a purchase order is
+// created "Pending Approval" rather than auto-"Approved". 0 means every PO
+// requires approval (see config.ApprovalThreshold).
+func (p *Procurement) SetApprovalThreshold(v float64) { p.approvalThreshold = v }
+
+// poInitialStatus returns the status a newly created PO of the given total
+// should take under the configured approval threshold.
+func (p *Procurement) poInitialStatus(total float64) string {
+	if p.approvalThreshold > 0 && total < p.approvalThreshold {
+		return "Approved"
+	}
+	return "Pending Approval"
+}
 
 func NewProcurement(pool *pgxpool.Pool) *Procurement {
 	return &Procurement{pool: pool}
@@ -116,7 +131,7 @@ func (p *Procurement) CreatePurchaseOrder(ctx context.Context, vendorID, title, 
 	id := newProcurementID("PO-2026")
 	now := time.Now().UTC()
 	createdDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	status := "Draft"
+	status := p.poInitialStatus(total)
 
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
@@ -125,9 +140,9 @@ func (p *Procurement) CreatePurchaseOrder(ctx context.Context, vendorID, title, 
 	defer tx.Rollback(ctx)
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO purchase_orders (id, vendor_id, title, total, currency, status, created_at, expected_date, budget_id, requisition_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''))`,
-		id, vendorID, title, total, currency, status, createdDay, expectedDate, budgetID, strings.TrimSpace(requisitionID),
+		INSERT INTO purchase_orders (id, vendor_id, title, total, currency, status, created_at, expected_date, budget_id, requisition_id, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),$11)`,
+		id, vendorID, title, total, currency, status, createdDay, expectedDate, budgetID, strings.TrimSpace(requisitionID), auditUser,
 	); err != nil {
 		return nil, err
 	}

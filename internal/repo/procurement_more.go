@@ -3,8 +3,11 @@ package repo
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"iag-procurement/backend/internal/models"
 )
@@ -225,6 +228,12 @@ func (p *Procurement) CreateGrn(ctx context.Context, vendorID string, poID *stri
 	}
 	defer tx.Rollback(ctx)
 
+	if poID != nil {
+		if err := p.assertPOReceivable(ctx, tx, *poID); err != nil {
+			return nil, err
+		}
+	}
+
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO grns (id, po_id, vendor_id, received_date, received_by, status)
 		VALUES ($1,$2,$3,$4,$5,$6)`,
@@ -246,13 +255,20 @@ func (p *Procurement) CreateGrn(ctx context.Context, vendorID string, poID *stri
 	); err != nil {
 		return nil, err
 	}
+	out := &models.Grn{
+		ID: id, PoID: poID, VendorID: vendorID, ReceivedDate: rd.UTC().Format("2006-01-02"),
+		ReceivedBy: receivedBy, Status: status,
+	}
+	if err := p.recognizePOSpendOnReceipt(ctx, tx, out); err != nil {
+		return nil, err
+	}
+	if err := p.enqueueGrnPosted(ctx, tx, out); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return &models.Grn{
-		ID: id, PoID: poID, VendorID: vendorID, ReceivedDate: rd.UTC().Format("2006-01-02"),
-		ReceivedBy: receivedBy, Status: status,
-	}, nil
+	return out, nil
 }
 
 // CreateInvoice inserts an AP invoice row and audit trail entry.
@@ -265,7 +281,6 @@ func (p *Procurement) CreateInvoice(ctx context.Context, vendorID string, poID *
 		currency = "USD"
 	}
 	status := "Pending Approval"
-	matchStatus := "Pending"
 	idate := invoiceDate
 	if idate == nil {
 		t := time.Now().UTC()
@@ -286,6 +301,15 @@ func (p *Procurement) CreateInvoice(ctx context.Context, vendorID string, poID *
 	}
 	defer tx.Rollback(ctx)
 
+	// Three-way match: derive match_status from the linked PO and goods receipt.
+	// No PO → "No PO"; PO with no posted GRN → "Pending GRN"; received and the
+	// amount agrees with the PO total → "Matched"; received but amounts differ
+	// → "Amount variance". Buyers clear variances downstream before payment.
+	matchStatus, err := p.deriveInvoiceMatchStatus(ctx, tx, poID, amount)
+	if err != nil {
+		return nil, err
+	}
+
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO invoices (id, invoice_no, vendor_id, po_id, amount, currency, status, match_status, invoice_date)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
@@ -299,11 +323,8 @@ func (p *Procurement) CreateInvoice(ctx context.Context, vendorID string, poID *
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO audit_entries (username, action, target, detail)
 		VALUES ($1,$2,$3,$4)`,
-		auditUser, "create", id, fmt.Sprintf("vendor=%s amount=%.2f %s", vendorID, amount, currency),
+		auditUser, "create", id, fmt.Sprintf("vendor=%s amount=%.2f %s match=%s", vendorID, amount, currency, matchStatus),
 	); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	out := models.Invoice{
@@ -314,7 +335,49 @@ func (p *Procurement) CreateInvoice(ctx context.Context, vendorID string, poID *
 		s := strings.TrimSpace(*invoiceNo)
 		out.InvoiceNo = &s
 	}
+	if err := p.enqueueInvoiceReceived(ctx, tx, &out); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	return &out, nil
+}
+
+// deriveInvoiceMatchStatus runs the PO/GRN side of the three-way match for a new
+// invoice, inside the caller's transaction. Returns one of "No PO",
+// "Pending GRN", "Matched", or "Amount variance".
+func (p *Procurement) deriveInvoiceMatchStatus(ctx context.Context, tx pgx.Tx, poID *string, amount float64) (string, error) {
+	pid := ""
+	if poID != nil {
+		pid = strings.TrimSpace(*poID)
+	}
+	if pid == "" {
+		return "No PO", nil
+	}
+	var poTotal float64
+	err := tx.QueryRow(ctx, `SELECT total FROM purchase_orders WHERE id = $1`, pid).Scan(&poTotal)
+	if err == pgx.ErrNoRows {
+		return "No PO", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var received bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM grns WHERE po_id = $1 AND lower(status) IN ('posted','received'))`,
+		pid,
+	).Scan(&received); err != nil {
+		return "", err
+	}
+	switch {
+	case !received:
+		return "Pending GRN", nil
+	case math.Abs(amount-poTotal) <= 0.01:
+		return "Matched", nil
+	default:
+		return "Amount variance", nil
+	}
 }
 
 // CreateContract inserts a vendor contract row and audit trail entry.

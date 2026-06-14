@@ -153,6 +153,7 @@ func main() {
 	defer workerCancel()
 
 	procurementRepo := repo.NewProcurement(pool)
+	procurementRepo.SetApprovalThreshold(cfg.ApprovalThreshold)
 
 	var commercialConsumer *consumer.Commercial
 	var supplyChainConsumer *consumer.SupplyChain
@@ -162,14 +163,14 @@ func main() {
 	})
 	defer func() { _ = publisher.Close() }()
 	if cfg.EventBusEnabled && len(cfg.KafkaBrokers) > 0 {
-		// Transactional outbox: requisition approval/rejection events are
-		// enqueued in the status-change tx and drained to Kafka here, so a
-		// broker outage delays delivery instead of dropping events.
+		// Transactional outbox: requisition approval/rejection, invoice-received,
+		// and GRN-posted events are enqueued in their writing tx by the repo and
+		// drained to Kafka here, so a broker outage delays delivery instead of
+		// dropping events.
 		outboxStore := outbox.NewStore(pool)
 		procurementRepo.SetOutbox(outboxStore)
-		publisher.SetOutbox(outboxStore)
 		go outbox.NewPublisher(outboxStore, publisher).Run(workerCtx)
-		log.Printf("event bus: requisition outbox publisher started")
+		log.Printf("event bus: outbox publisher started")
 	}
 	if cfg.EventBusEnabled && len(cfg.KafkaBrokers) > 0 {
 		commercialConsumer = consumer.NewCommercial(consumer.Config{

@@ -628,13 +628,19 @@ func (p *Procurement) UpdatePurchaseOrder(
 	}
 	defer tx.Rollback(ctx)
 
-	// Load current vendor id to adjust open_pos if vendor changes.
-	var curVendor string
-	if err := tx.QueryRow(ctx, `SELECT vendor_id FROM purchase_orders WHERE id = $1`, id).Scan(&curVendor); err != nil {
+	// Load current vendor id (to adjust open_pos if vendor changes) and the
+	// creator (for the segregation-of-duties check below).
+	var curVendor, createdBy string
+	if err := tx.QueryRow(ctx, `SELECT vendor_id, COALESCE(created_by, '') FROM purchase_orders WHERE id = $1`, id).Scan(&curVendor, &createdBy); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, ErrNotFound
 		}
 		return nil, err
+	}
+
+	// Segregation of duties: the creator may not approve their own PO.
+	if status != nil && strings.EqualFold(strings.TrimSpace(*status), "approved") && sameActor(auditUser, createdBy) {
+		return nil, fmt.Errorf("%w: creator cannot approve their own purchase order", ErrForbidden)
 	}
 
 	// If lines are provided, replace and recompute total.
@@ -864,6 +870,12 @@ func (p *Procurement) UpdateGrn(
 	out.PoID = poOut
 	if rd != nil {
 		out.ReceivedDate = rd.UTC().Format("2006-01-02")
+	}
+	if err := p.recognizePOSpendOnReceipt(ctx, tx, &out); err != nil {
+		return nil, err
+	}
+	if err := p.enqueueGrnPosted(ctx, tx, &out); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
