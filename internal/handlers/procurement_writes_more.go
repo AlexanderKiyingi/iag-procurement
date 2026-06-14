@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"iag-procurement/backend/internal/models"
 )
 
 type postVendorBody struct {
@@ -135,11 +137,12 @@ func (a *API) postRfq(c *gin.Context) {
 }
 
 type postGrnBody struct {
-	VendorID     string  `json:"vendorId" binding:"required"`
-	PoID         *string `json:"poId"`
-	ReceivedBy   string  `json:"receivedBy"`
-	Status       string  `json:"status"`
-	ReceivedDate string  `json:"receivedDate"`
+	VendorID     string           `json:"vendorId" binding:"required"`
+	PoID         *string          `json:"poId"`
+	ReceivedBy   string           `json:"receivedBy"`
+	Status       string           `json:"status"`
+	ReceivedDate string           `json:"receivedDate"`
+	Lines        []models.GrnLine `json:"lines"`
 }
 
 func (a *API) postGrn(c *gin.Context) {
@@ -166,7 +169,7 @@ func (a *API) postGrn(c *gin.Context) {
 	}
 	row, err := a.procurement.CreateGrn(c.Request.Context(),
 		strings.TrimSpace(body.VendorID), poID, strings.TrimSpace(body.ReceivedBy), strings.TrimSpace(body.Status),
-		rd, authActorEmail(c))
+		rd, body.Lines, authActorEmail(c))
 	if mapProcurementErr(c, err) {
 		return
 	}

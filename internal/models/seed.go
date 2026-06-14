@@ -32,14 +32,17 @@ type Item struct {
 }
 
 type Budget struct {
-	ID         string  `json:"id"`
-	Code       string  `json:"code"`
-	Period     string  `json:"period"`
-	Allocated  float64 `json:"allocated"`
-	Committed  float64 `json:"committed"`
-	Spent      float64 `json:"spent"`
-	Remaining  float64 `json:"remaining"`
-	Dept       string  `json:"dept"`
+	ID           string  `json:"id"`
+	Code         string  `json:"code"`
+	Period       string  `json:"period"`
+	Allocated    float64 `json:"allocated"`
+	PreCommitted float64 `json:"preCommitted"`
+	Committed    float64 `json:"committed"`
+	Spent        float64 `json:"spent"`
+	Remaining    float64 `json:"remaining"`
+	Dept         string  `json:"dept"`
+	PeriodEnd    string  `json:"periodEnd,omitempty"`
+	PeriodClosedAt string `json:"periodClosedAt,omitempty"`
 }
 
 type Requisition struct {
@@ -98,12 +101,21 @@ type Po struct {
 }
 
 type Grn struct {
-	ID            string  `json:"id"`
-	PoID          *string `json:"poId"`
-	VendorID      string  `json:"vendorId"`
-	ReceivedDate  string  `json:"receivedDate"`
-	ReceivedBy    string  `json:"receivedBy"`
-	Status        string  `json:"status"`
+	ID            string    `json:"id"`
+	PoID          *string   `json:"poId"`
+	VendorID      string    `json:"vendorId"`
+	ReceivedDate  string    `json:"receivedDate"`
+	ReceivedBy    string    `json:"receivedBy"`
+	Status        string    `json:"status"`
+	Lines         []GrnLine `json:"lines,omitempty"`
+}
+
+// GrnLine is one received line on a goods receipt; its qty*unitPrice drives
+// proportional budget spend recognition.
+type GrnLine struct {
+	ItemID    string  `json:"itemId"`
+	Qty       float64 `json:"qty"`
+	UnitPrice float64 `json:"unitPrice"`
 }
 
 type Invoice struct {

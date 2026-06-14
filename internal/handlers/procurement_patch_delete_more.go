@@ -438,11 +438,12 @@ func (a *API) deletePurchaseOrder(c *gin.Context) {
 }
 
 type patchGrnBody struct {
-	PoID         *string `json:"poId"` // if present and empty: clear
-	VendorID     *string `json:"vendorId"`
-	ReceivedDate *string `json:"receivedDate"` // if present and empty: clear
-	ReceivedBy   *string `json:"receivedBy"`
-	Status       *string `json:"status"`
+	PoID         *string           `json:"poId"` // if present and empty: clear
+	VendorID     *string           `json:"vendorId"`
+	ReceivedDate *string           `json:"receivedDate"` // if present and empty: clear
+	ReceivedBy   *string           `json:"receivedBy"`
+	Status       *string           `json:"status"`
+	Lines        *[]models.GrnLine `json:"lines"` // if present: replace all received lines
 }
 
 func (a *API) patchGrn(c *gin.Context) {
@@ -486,6 +487,7 @@ func (a *API) patchGrn(c *gin.Context) {
 		datePtr,
 		body.ReceivedBy,
 		body.Status,
+		body.Lines,
 		authActorEmail(c),
 	)
 	if mapProcurementErr(c, err) {

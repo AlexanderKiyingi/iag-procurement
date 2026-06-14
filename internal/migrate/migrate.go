@@ -57,6 +57,11 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 		"007_rbac_admin_write_grants.sql", "008_staff.sql", "009_pm_integration.sql",
 		"010_drop_dead_tables.sql", "011_party_portal.sql", "012_scm_party_link.sql",
 		"013_requisition_integration.sql", "014_procurement_controls.sql",
+		"015_budget_accrual.sql",
+		// Appended (not inserted) to avoid renumbering existing versions: this
+		// idempotent ALTER was orphaned by a 010_* filename collision, so fresh
+		// DBs never got requisitions.pm_workspace_owner. Safe to re-run.
+		"010_pm_workspace_owner.sql",
 	}
 	for i, name := range files {
 		version := fmt.Sprintf("%d", i+1)

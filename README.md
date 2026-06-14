@@ -40,8 +40,12 @@ Requires `platform_user_id` on the vendor row (set during supplier invite/onboar
 
 - **PO approval workflow.** POs are created `Pending Approval` (or `Approved` when the total is below `PROCUREMENT_APPROVAL_THRESHOLD`). Approve/reject via `PATCH /purchase-orders/:id` with a `status`. Goods can only be received against a PO that has cleared approval.
 - **Segregation of duties.** The user who created a requisition/PO cannot approve it (HTTP 403).
-- **Budget lifecycle.** Approving a requisition encumbers its total (`committed`) and is rejected if it would exceed the budget. Posting the first GRN for a PO converts the encumbrance to actual spend (`committed → spent`, once per PO).
+- **Budget lifecycle (three-stage accrual).** `remaining = allocated − pre_committed − committed − spent`. Approving a requisition **pre-encumbers** its total (rejected if it would exceed the budget); raising a PO converts that estimate into a firm **encumbrance** (`committed`, also released on PO reject/cancel/delete); posting a GRN recognizes actual **spend** proportionally to the received line value (`committed → spent`), reversible on un-post/delete. See [Period close](#period-close) for open-encumbrance handling.
 - **Three-way match.** New invoices get a `matchStatus` of `No PO` / `Pending GRN` / `Matched` / `Amount variance` from the linked PO and goods receipt.
+
+### Period close
+
+Open encumbrances are resolved at period end via `POST /api/v1/admin/budgets/close-period` (perm `procurement.manage_budget_period`) with `{policy: "lapse"|"carry", period?, budgetId?}` — `lapse` releases `pre_committed`+`committed` back to `remaining`, `carry` retains them. The same runs automatically as a daily job when `PROCUREMENT_PERIOD_CLOSE_ENABLED=true` (closing budgets past `period_end`).
 
 ### RFQ → quote → award
 

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"iag-procurement/backend/internal/models"
 )
 
@@ -190,16 +192,17 @@ func (p *Procurement) UpdateRequisition(
 		pmReqID         *string
 		pmOwner         *string
 		budgetCommitted bool
+		preReleased     bool
 	)
 	out := models.Requisition{}
 	if err := tx.QueryRow(ctx, `
 		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id,
-		       pm_requisition_id, pm_workspace_owner, budget_committed
+		       pm_requisition_id, pm_workspace_owner, budget_committed, pre_released
 		FROM requisitions WHERE id = $1`, id,
 	).Scan(
 		&out.ID, &out.Title, &out.Dept, &out.Requester, &out.Priority, &out.Status,
 		&createdAt, &needed, &out.Total, &out.Currency, &out.BudgetID,
-		&pmReqID, &pmOwner, &budgetCommitted,
+		&pmReqID, &pmOwner, &budgetCommitted, &preReleased,
 	); err != nil {
 		return nil, err
 	}
@@ -220,7 +223,7 @@ func (p *Procurement) UpdateRequisition(
 			if outcome == "approved" && sameActor(auditUser, out.Requester) {
 				return nil, fmt.Errorf("%w: requester cannot approve their own requisition", ErrForbidden)
 			}
-			if err := p.applyBudgetCommitment(ctx, tx, out.ID, outcome, budgetCommitted, out.BudgetID, out.Total); err != nil {
+			if err := p.applyBudgetCommitment(ctx, tx, out.ID, outcome, budgetCommitted, preReleased, out.BudgetID, out.Total); err != nil {
 				return nil, err
 			}
 			if err := p.enqueueRequisitionOutcome(ctx, tx, outcome, out.ID, deref(pmReqID), deref(pmOwner), auditUser, out.BudgetID); err != nil {
@@ -245,6 +248,30 @@ func (p *Procurement) DeleteRequisition(ctx context.Context, id string, auditUse
 		return err
 	}
 	defer tx.Rollback(ctx)
+
+	// Release any outstanding pre-encumbrance before the row is gone, unless a PO
+	// already liquidated it (then the firm encumbrance lives on the PO).
+	var budgetID string
+	var total float64
+	var budgetCommitted, preReleased bool
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(budget_id, ''), total, budget_committed, pre_released
+		FROM requisitions WHERE id = $1`, id,
+	).Scan(&budgetID, &total, &budgetCommitted, &preReleased); err != nil {
+		if err == pgx.ErrNoRows {
+			return ErrNotFound
+		}
+		return err
+	}
+	if budgetCommitted && !preReleased && strings.TrimSpace(budgetID) != "" && total > 0 {
+		if _, err := tx.Exec(ctx, `
+			UPDATE budgets
+			SET pre_committed = GREATEST(pre_committed - $2, 0),
+			    remaining = allocated - GREATEST(pre_committed - $2, 0) - committed - spent
+			WHERE id = $1`, budgetID, total); err != nil {
+			return err
+		}
+	}
 
 	ct, err := tx.Exec(ctx, `DELETE FROM requisitions WHERE id = $1`, id)
 	if err != nil {

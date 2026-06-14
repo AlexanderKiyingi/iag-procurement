@@ -82,15 +82,21 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 
 	{
 		rows, err := s.pool.Query(ctx, `
-		SELECT id, code, period, allocated, committed, spent, remaining, dept FROM budgets ORDER BY id`)
+		SELECT id, code, period, allocated, pre_committed, committed, spent, remaining, dept, period_end, period_closed_at
+		FROM budgets ORDER BY id`)
 		if err != nil {
 			return nil, fmt.Errorf("budgets: %w", err)
 		}
 		for rows.Next() {
 			var b models.Budget
-			if err := rows.Scan(&b.ID, &b.Code, &b.Period, &b.Allocated, &b.Committed, &b.Spent, &b.Remaining, &b.Dept); err != nil {
+			var periodEnd, periodClosedAt *time.Time
+			if err := rows.Scan(&b.ID, &b.Code, &b.Period, &b.Allocated, &b.PreCommitted, &b.Committed, &b.Spent, &b.Remaining, &b.Dept, &periodEnd, &periodClosedAt); err != nil {
 				rows.Close()
 				return nil, err
+			}
+			b.PeriodEnd = fdate(periodEnd)
+			if periodClosedAt != nil {
+				b.PeriodClosedAt = periodClosedAt.UTC().Format(time.RFC3339)
 			}
 			out.Budgets = append(out.Budgets, b)
 		}
@@ -204,6 +210,28 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 		rows.Close()
 	}
 
+	linesByGRN := map[string][]models.GrnLine{}
+	{
+		rows, err := s.pool.Query(ctx, `SELECT grn_id, item_id, qty, unit_price FROM grn_lines ORDER BY grn_id, id`)
+		if err != nil {
+			return nil, fmt.Errorf("grn_lines: %w", err)
+		}
+		for rows.Next() {
+			var grnID, itemID string
+			var qty, price float64
+			if err := rows.Scan(&grnID, &itemID, &qty, &price); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			linesByGRN[grnID] = append(linesByGRN[grnID], models.GrnLine{ItemID: itemID, Qty: qty, UnitPrice: price})
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+
 	{
 		rows, err := s.pool.Query(ctx, `
 		SELECT id, po_id, vendor_id, received_date, received_by, status FROM grns ORDER BY id`)
@@ -220,6 +248,7 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 			}
 			g.PoID = poID
 			g.ReceivedDate = fdate(rd)
+			g.Lines = linesByGRN[g.ID]
 			out.Grns = append(out.Grns, g)
 		}
 		if err := rows.Err(); err != nil {

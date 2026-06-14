@@ -181,6 +181,12 @@ func (p *Procurement) CreatePurchaseOrder(ctx context.Context, vendorID, title, 
 		return nil, err
 	}
 
+	// Stage 2: book the firm encumbrance (and liquidate the source requisition's
+	// pre-encumbrance, if any) atomically with the PO.
+	if err := p.applyPOEncumbrance(ctx, tx, id, budgetID, requisitionID, total); err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}

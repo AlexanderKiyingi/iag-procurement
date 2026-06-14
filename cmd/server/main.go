@@ -155,6 +155,30 @@ func main() {
 	procurementRepo := repo.NewProcurement(pool)
 	procurementRepo.SetApprovalThreshold(cfg.ApprovalThreshold)
 
+	// Daily budget period-close job: closes budgets whose period_end has passed,
+	// applying the configured policy (lapse / carry). Runs once shortly after
+	// boot, then every 24h, until shutdown.
+	if cfg.PeriodCloseEnabled {
+		go func() {
+			ticker := time.NewTicker(24 * time.Hour)
+			defer ticker.Stop()
+			for {
+				ids, err := procurementRepo.CloseBudgetPeriod(workerCtx, cfg.PeriodClosePolicy, repo.BudgetCloseFilter{DueOnly: true}, "system")
+				if err != nil {
+					log.Printf("budget period close: %v", err)
+				} else if len(ids) > 0 {
+					log.Printf("budget period close: closed %d budget(s) (policy=%s)", len(ids), cfg.PeriodClosePolicy)
+				}
+				select {
+				case <-workerCtx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+		log.Printf("budget period close job enabled (policy=%s)", cfg.PeriodClosePolicy)
+	}
+
 	var commercialConsumer *consumer.Commercial
 	var supplyChainConsumer *consumer.SupplyChain
 	publisher := procevents.NewPublisher(procevents.PublisherConfig{

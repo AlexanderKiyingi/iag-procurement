@@ -38,6 +38,7 @@ var bootstrapPermissions = []permDef{
 	{AddBudget, "Can add budget", "Create budget envelopes"},
 	{ChangeBudget, "Can change budget", "Update budget envelopes"},
 	{DeleteBudget, "Can delete budget", "Delete budget envelopes"},
+	{ManageBudgetPeriod, "Can manage budget periods", "Close budget periods (lapse / carry encumbrances)"},
 	{AddRfq, "Can add RFQ", "Create requests for quotation"},
 	{ChangeRfq, "Can change RFQ", "Update requests for quotation"},
 	{DeleteRfq, "Can delete RFQ", "Delete requests for quotation"},

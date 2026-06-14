@@ -23,6 +23,7 @@ const (
 	AddBudget        = "procurement.add_budget"
 	ChangeBudget     = "procurement.change_budget"
 	DeleteBudget     = "procurement.delete_budget"
+	ManageBudgetPeriod = "procurement.manage_budget_period"
 	AddRfq           = "procurement.add_rfq"
 	ChangeRfq        = "procurement.change_rfq"
 	DeleteRfq        = "procurement.delete_rfq"

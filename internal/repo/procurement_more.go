@@ -202,8 +202,10 @@ func (p *Procurement) CreateRfq(ctx context.Context, title string, dueDate *time
 	return &out, nil
 }
 
-// CreateGrn inserts a goods receipt note and audit trail entry.
-func (p *Procurement) CreateGrn(ctx context.Context, vendorID string, poID *string, receivedBy, status string, receivedDate *time.Time, auditUser string) (*models.Grn, error) {
+// CreateGrn inserts a goods receipt note, its received lines, and an audit
+// trail entry. Lines drive proportional budget spend recognition when the GRN
+// is posted; a GRN with no lines recognizes the full PO remainder.
+func (p *Procurement) CreateGrn(ctx context.Context, vendorID string, poID *string, receivedBy, status string, receivedDate *time.Time, lines []models.GrnLine, auditUser string) (*models.Grn, error) {
 	vendorID = strings.TrimSpace(vendorID)
 	if vendorID == "" {
 		return nil, fmt.Errorf("%w: vendorId is required", ErrInvalidArgument)
@@ -241,6 +243,16 @@ func (p *Procurement) CreateGrn(ctx context.Context, vendorID string, poID *stri
 	); err != nil {
 		return nil, err
 	}
+	for _, ln := range lines {
+		if strings.TrimSpace(ln.ItemID) == "" || ln.Qty <= 0 || ln.UnitPrice < 0 {
+			return nil, fmt.Errorf("%w: invalid grn line qty/price/itemId", ErrInvalidArgument)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO grn_lines (grn_id, item_id, qty, unit_price) VALUES ($1,$2,$3,$4)`,
+			id, strings.TrimSpace(ln.ItemID), ln.Qty, ln.UnitPrice,
+		); err != nil {
+			return nil, err
+		}
+	}
 	if auditUser == "" {
 		auditUser = "unknown"
 	}
@@ -257,7 +269,7 @@ func (p *Procurement) CreateGrn(ctx context.Context, vendorID string, poID *stri
 	}
 	out := &models.Grn{
 		ID: id, PoID: poID, VendorID: vendorID, ReceivedDate: rd.UTC().Format("2006-01-02"),
-		ReceivedBy: receivedBy, Status: status,
+		ReceivedBy: receivedBy, Status: status, Lines: lines,
 	}
 	if err := p.recognizePOSpendOnReceipt(ctx, tx, out); err != nil {
 		return nil, err

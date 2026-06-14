@@ -145,15 +145,15 @@ func (p *Procurement) UpdateBudget(ctx context.Context, id string, code, period 
 	}
 	defer tx.Rollback(ctx)
 
-	// Update budget, and if allocated changes, recompute remaining based on existing committed/spent.
-	// remaining = allocated - committed - spent
+	// Update budget; if allocated changes, recompute remaining from the existing
+	// three-stage balances. remaining = allocated - pre_committed - committed - spent
 	ct, err := tx.Exec(ctx, `
 		UPDATE budgets b SET
 			code = COALESCE($2, code),
 			period = COALESCE($3, period),
 			allocated = COALESCE($4, allocated),
 			dept = COALESCE($5, dept),
-			remaining = (COALESCE($4, allocated) - committed - spent)
+			remaining = (COALESCE($4, allocated) - pre_committed - committed - spent)
 		WHERE id = $1`,
 		id, code, period, allocated, dept,
 	)
@@ -174,8 +174,8 @@ func (p *Procurement) UpdateBudget(ctx context.Context, id string, code, period 
 
 	var out models.Budget
 	if err := tx.QueryRow(ctx, `
-		SELECT id, code, period, allocated, committed, spent, remaining, dept FROM budgets WHERE id = $1`, id,
-	).Scan(&out.ID, &out.Code, &out.Period, &out.Allocated, &out.Committed, &out.Spent, &out.Remaining, &out.Dept); err != nil {
+		SELECT id, code, period, allocated, pre_committed, committed, spent, remaining, dept FROM budgets WHERE id = $1`, id,
+	).Scan(&out.ID, &out.Code, &out.Period, &out.Allocated, &out.PreCommitted, &out.Committed, &out.Spent, &out.Remaining, &out.Dept); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -628,10 +628,16 @@ func (p *Procurement) UpdatePurchaseOrder(
 	}
 	defer tx.Rollback(ctx)
 
-	// Load current vendor id (to adjust open_pos if vendor changes) and the
-	// creator (for the segregation-of-duties check below).
-	var curVendor, createdBy string
-	if err := tx.QueryRow(ctx, `SELECT vendor_id, COALESCE(created_by, '') FROM purchase_orders WHERE id = $1`, id).Scan(&curVendor, &createdBy); err != nil {
+	// Load current vendor id (to adjust open_pos if vendor changes), the creator
+	// (segregation-of-duties), and the firm-encumbrance state (to keep committed
+	// in sync on edit/reject). Lock the PO row to serialize with GRN-posting.
+	var curVendor, createdBy, curStatus, poBudgetID string
+	var curTotal, spentRecognized float64
+	var budgetCommitted bool
+	if err := tx.QueryRow(ctx, `
+		SELECT vendor_id, COALESCE(created_by, ''), status, COALESCE(budget_id, ''), total, spent_recognized, budget_committed
+		FROM purchase_orders WHERE id = $1 FOR UPDATE`, id,
+	).Scan(&curVendor, &createdBy, &curStatus, &poBudgetID, &curTotal, &spentRecognized, &budgetCommitted); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, ErrNotFound
 		}
@@ -700,6 +706,54 @@ func (p *Procurement) UpdatePurchaseOrder(
 		}
 	}
 
+	// Keep the firm encumbrance (stage 2) in sync with status/total edits.
+	// Operates on the PO's original budget; changing budget_id does not move an
+	// existing encumbrance (unsupported edge — re-budget via reject + re-raise).
+	if budgetCommitted && strings.TrimSpace(poBudgetID) != "" {
+		newStatus := curStatus
+		if status != nil {
+			newStatus = strings.TrimSpace(*status)
+		}
+		newTotal := curTotal
+		if totalPtr != nil {
+			newTotal = *totalPtr
+		}
+		ls := strings.ToLower(newStatus)
+		switch {
+		case ls == "rejected" || ls == "cancelled":
+			// Release the open (un-received) encumbrance; recognized spend stays.
+			if err := p.releasePOEncumbrance(ctx, tx, id, poBudgetID, curTotal, spentRecognized); err != nil {
+				return nil, err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE purchase_orders SET budget_committed = FALSE WHERE id = $1`, id); err != nil {
+				return nil, err
+			}
+		case totalPtr != nil && newTotal != curTotal:
+			if newTotal < spentRecognized-0.005 {
+				return nil, fmt.Errorf("%w: purchase order total %.2f cannot be below recognized spend %.2f", ErrInvalidArgument, newTotal, spentRecognized)
+			}
+			delta := newTotal - curTotal
+			if delta > 0 {
+				var allocated, committed, spent float64
+				if err := tx.QueryRow(ctx, `SELECT allocated, committed, spent FROM budgets WHERE id = $1 FOR UPDATE`, poBudgetID).
+					Scan(&allocated, &committed, &spent); err != nil {
+					if err != pgx.ErrNoRows {
+						return nil, err
+					}
+				} else if committed+delta+spent-allocated > 0.005 {
+					return nil, fmt.Errorf("%w: purchase order increase of %.2f would exceed budget %s", ErrInvalidArgument, delta, poBudgetID)
+				}
+			}
+			if _, err := tx.Exec(ctx, `
+				UPDATE budgets
+				SET committed = GREATEST(committed + $2, 0),
+				    remaining = allocated - pre_committed - GREATEST(committed + $2, 0) - spent
+				WHERE id = $1`, poBudgetID, delta); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	if auditUser == "" {
 		auditUser = "unknown"
 	}
@@ -761,12 +815,24 @@ func (p *Procurement) DeletePurchaseOrder(ctx context.Context, id string, auditU
 	}
 	defer tx.Rollback(ctx)
 
-	var vendorID string
-	if err := tx.QueryRow(ctx, `SELECT vendor_id FROM purchase_orders WHERE id = $1`, id).Scan(&vendorID); err != nil {
+	var vendorID, poBudgetID string
+	var poTotal, spentRecognized float64
+	var budgetCommitted bool
+	if err := tx.QueryRow(ctx, `
+		SELECT vendor_id, COALESCE(budget_id, ''), total, spent_recognized, budget_committed
+		FROM purchase_orders WHERE id = $1 FOR UPDATE`, id,
+	).Scan(&vendorID, &poBudgetID, &poTotal, &spentRecognized, &budgetCommitted); err != nil {
 		if err == pgx.ErrNoRows {
 			return ErrNotFound
 		}
 		return err
+	}
+
+	// Release the open firm encumbrance before deleting; recognized spend stays.
+	if budgetCommitted {
+		if err := p.releasePOEncumbrance(ctx, tx, id, poBudgetID, poTotal, spentRecognized); err != nil {
+			return err
+		}
 	}
 
 	ct, err := tx.Exec(ctx, `DELETE FROM purchase_orders WHERE id = $1`, id)
@@ -795,12 +861,15 @@ func (p *Procurement) DeletePurchaseOrder(ctx context.Context, id string, auditU
 }
 
 // UpdateGrn supports clearing poId/receivedDate by passing pointers to "" (handlers do this).
+// When lines is non-nil it replaces all received lines (rejected once the GRN's
+// spend has been recognized, so a posted receipt's value can't be rewritten).
 func (p *Procurement) UpdateGrn(
 	ctx context.Context,
 	id string,
 	vendorID, poID *string,
 	receivedDate **time.Time,
 	receivedBy, status *string,
+	lines *[]models.GrnLine,
 	auditUser string,
 ) (*models.Grn, error) {
 	id = strings.TrimSpace(id)
@@ -851,6 +920,32 @@ func (p *Procurement) UpdateGrn(
 	if ct.RowsAffected() == 0 {
 		return nil, ErrNotFound
 	}
+
+	// Replace received lines when supplied — but not after the receipt's spend
+	// has been recognized (that value is locked in until un-post).
+	if lines != nil {
+		var alreadyRecognized bool
+		if err := tx.QueryRow(ctx, `SELECT budget_recognized FROM grns WHERE id = $1`, id).Scan(&alreadyRecognized); err != nil {
+			return nil, err
+		}
+		if alreadyRecognized {
+			return nil, fmt.Errorf("%w: cannot edit lines of a posted/recognized GRN", ErrInvalidArgument)
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM grn_lines WHERE grn_id = $1`, id); err != nil {
+			return nil, err
+		}
+		for _, ln := range *lines {
+			if strings.TrimSpace(ln.ItemID) == "" || ln.Qty <= 0 || ln.UnitPrice < 0 {
+				return nil, fmt.Errorf("%w: invalid grn line qty/price/itemId", ErrInvalidArgument)
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO grn_lines (grn_id, item_id, qty, unit_price) VALUES ($1,$2,$3,$4)`,
+				id, strings.TrimSpace(ln.ItemID), ln.Qty, ln.UnitPrice,
+			); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	if auditUser == "" {
 		auditUser = "unknown"
 	}
@@ -893,6 +988,21 @@ func (p *Procurement) DeleteGrn(ctx context.Context, id string, auditUser string
 		return err
 	}
 	defer tx.Rollback(ctx)
+
+	// Reverse any recognized spend before the receipt (and its lines) are gone.
+	var poOut *string
+	var grnStatus string
+	if err := tx.QueryRow(ctx, `SELECT po_id, status FROM grns WHERE id = $1`, id).Scan(&poOut, &grnStatus); err != nil {
+		if err == pgx.ErrNoRows {
+			return ErrNotFound
+		}
+		return err
+	}
+	// Pass a non-Posted status so recognize() takes the reversal branch.
+	if err := p.recognizePOSpendOnReceipt(ctx, tx, &models.Grn{ID: id, PoID: poOut, Status: "Deleted"}); err != nil {
+		return err
+	}
+
 	ct, err := tx.Exec(ctx, `DELETE FROM grns WHERE id = $1`, id)
 	if err != nil {
 		return err

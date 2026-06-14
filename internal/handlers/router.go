@@ -165,6 +165,10 @@ func (a *API) Mount(r *gin.Engine) {
 			al.Use(middleware.RequirePermission(rbac.ViewAPIAudit))
 			al.GET("/admin/audit-logs", a.listAPIAuditLogs)
 
+			bp := sec.Group("")
+			bp.Use(middleware.RequirePermission(rbac.ManageBudgetPeriod))
+			bp.POST("/admin/budgets/close-period", a.closeBudgetPeriod)
+
 			if legacyAuth {
 				ap := sec.Group("")
 				ap.Use(middleware.RequirePermission(rbac.ViewPermission))

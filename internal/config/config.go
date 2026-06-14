@@ -67,6 +67,12 @@ type Config struct {
 	// awarded RFQ becomes an approved draft PO). 0 (the default) means every PO
 	// requires approval. Set via PROCUREMENT_APPROVAL_THRESHOLD.
 	ApprovalThreshold float64
+
+	// PeriodCloseEnabled turns on the daily background job that closes budgets
+	// whose period_end has passed. PeriodClosePolicy is the policy it applies
+	// ("lapse" releases open encumbrances, "carry" retains them).
+	PeriodCloseEnabled bool
+	PeriodClosePolicy  string
 }
 
 func Load() (*Config, error) {
@@ -148,6 +154,9 @@ func Load() (*Config, error) {
 		Audience:  getenv("AUDIENCE", "iag.procurement"),
 
 		ApprovalThreshold: parseFloat(os.Getenv("PROCUREMENT_APPROVAL_THRESHOLD"), 0),
+
+		PeriodCloseEnabled: strings.EqualFold(os.Getenv("PROCUREMENT_PERIOD_CLOSE_ENABLED"), "true"),
+		PeriodClosePolicy:  strings.ToLower(getenv("PROCUREMENT_PERIOD_CLOSE_POLICY", "lapse")),
 	}
 
 	if c.DatabaseURL == "" {

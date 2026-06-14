@@ -202,6 +202,11 @@ func (p *Procurement) AwardRfq(ctx context.Context, rfqID, quoteID, vendorID, bu
 	); err != nil {
 		return nil, err
 	}
+	// Stage 2: book the firm encumbrance for the awarded PO (liquidating the
+	// source requisition's pre-encumbrance when present).
+	if err := p.applyPOEncumbrance(ctx, tx, poID, budgetID, deref(reqID), qAmount); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
