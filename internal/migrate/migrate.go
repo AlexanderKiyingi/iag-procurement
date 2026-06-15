@@ -62,6 +62,7 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 		// idempotent ALTER was orphaned by a 010_* filename collision, so fresh
 		// DBs never got requisitions.pm_workspace_owner. Safe to re-run.
 		"010_pm_workspace_owner.sql",
+		"016_procurement_request_intake.sql",
 	}
 	for i, name := range files {
 		version := fmt.Sprintf("%d", i+1)

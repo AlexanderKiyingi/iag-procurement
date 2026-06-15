@@ -63,10 +63,25 @@ Open encumbrances are resolved at period end via `POST /api/v1/admin/budgets/clo
 
 | Direction | Topic | Purpose |
 |-----------|-------|---------|
-| Consume | `iag.commercial` | PM requisition import (`pm.requisition.submitted`) |
-| Consume | `iag.supply-chain` | Party sync (`scm.party.created`, `scm.party.updated`) |
+| Consume | `iag.commercial` | Requisition import: PM (`pm.requisition.submitted`) and governance (`contracts.requisition.approved`) |
+| Consume | `iag.operations` | Inbound procurement requests (`procurement.requested`); warehouse low-stock signal (`warehouse.stock.below_minimum`, audit-logged) |
+| Consume | `iag.supply-chain` | Party sync (`scm.party.created`, `scm.party.updated`, `scm.party.portal_linked`) |
 
 Party sync updates `vendors.party_id` and `vendors.scm_business_id` for vendor/cooperative parties registered in SCM.
+
+### Inbound procurement requests
+
+Any service (stores/warehouse, fleet, etc.) can ask procurement to source something by emitting a `procurement.requested` event on `iag.operations`; it becomes a `Pending Approval` requisition that flows through the normal approval → PO → receipt lifecycle. The import is idempotent on `(origin_system, origin_ref)`.
+
+```json
+{ "type": "procurement.requested", "source": "iag-fleet",
+  "data": { "sourceService": "iag-fleet", "requestId": "FLEET-REQ-123",
+            "title": "Replace tyres for truck UAX-123", "department": "Fleet",
+            "requestedBy": "driver@iag", "amount": "1500.00", "currency": "UGX",
+            "urgency": "High", "justification": "Worn beyond limit" } }
+```
+
+`department` is mapped to a budget envelope (`ResolveBudgetForDept`); a buyer can reassign it before approval.
 
 ## Integration
 
