@@ -106,6 +106,14 @@ func (a *API) patchRequisition(c *gin.Context) {
 		return
 	}
 
+	// When tiered approval is enforced, a direct flat approve must go through the
+	// per-tier signature endpoint instead, so the amount-band matrix is honoured.
+	if a.cfg.RequireTieredApproval && body.Status != nil &&
+		strings.ToLower(strings.TrimSpace(*body.Status)) == "approved" {
+		c.JSON(http.StatusConflict, gin.H{"error": "tiered approval enforced; approve via POST /requisitions/{id}/approve"})
+		return
+	}
+
 	var neededPtr **time.Time
 	if body.NeededBy != nil {
 		s := strings.TrimSpace(*body.NeededBy)

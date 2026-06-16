@@ -11,6 +11,12 @@ const (
 	AddRequisition   = "procurement.add_requisition"
 	ChangeRequisition = "procurement.change_requisition"
 	DeleteRequisition = "procurement.delete_requisition"
+	// Tiered requisition approval. These gate the amount-band signatures on
+	// POST /requisitions/:id/approve; the matrix in requisition_approval_tiers
+	// maps each band to one of these (or any other registered) permission.
+	ApproveRequisitionTier1 = "procurement.approve_requisition_tier1"
+	ApproveRequisitionTier2 = "procurement.approve_requisition_tier2"
+	ApproveRequisitionTier3 = "procurement.approve_requisition_tier3"
 	AddPurchaseOrder = "procurement.add_purchase_order"
 	ChangePurchaseOrder = "procurement.change_purchase_order"
 	DeletePurchaseOrder = "procurement.delete_purchase_order"

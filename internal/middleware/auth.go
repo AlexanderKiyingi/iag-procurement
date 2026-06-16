@@ -45,6 +45,34 @@ func JWTAuth(svc *iam.Service) gin.HandlerFunc {
 	}
 }
 
+// HasPerm reports whether the authenticated principal holds the given permission
+// code, using the same resolution as RequirePermission (platform claims under
+// gateway/jwt, local super + perm list under legacy). Handlers use it for
+// data-dependent checks such as tiered approval, where the required permission
+// is only known after loading the record.
+func HasPerm(c *gin.Context, code string) bool {
+	mode := AuthMode(c)
+	if mode == "gateway" || mode == "jwt" {
+		if claims, ok := PlatformClaims(c); ok {
+			return authclient.HasPermission(claims, code)
+		}
+		return false
+	}
+	if v, ok := c.Get(CtxSuper); ok {
+		if super, _ := v.(bool); super {
+			return true
+		}
+	}
+	v, _ := c.Get(CtxPerms)
+	list, _ := v.([]string)
+	for _, p := range list {
+		if p == code {
+			return true
+		}
+	}
+	return false
+}
+
 // RequirePermission checks platform JWT permissions (gateway/jwt) or legacy local RBAC.
 func RequirePermission(code string) gin.HandlerFunc {
 	return func(c *gin.Context) {

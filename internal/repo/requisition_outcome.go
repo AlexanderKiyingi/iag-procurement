@@ -377,7 +377,11 @@ func (p *Procurement) enqueueInvoiceReceived(ctx context.Context, tx pgx.Tx, inv
 			due = &t
 		}
 	}
-	key, payload, err := events.BuildInvoiceReceived(docRef, inv.VendorID, fmt.Sprintf("%.2f", inv.Amount), currency, due)
+	poRef := ""
+	if inv.PoID != nil {
+		poRef = strings.TrimSpace(*inv.PoID)
+	}
+	key, payload, err := events.BuildInvoiceReceived(docRef, inv.VendorID, fmt.Sprintf("%.2f", inv.Amount), currency, poRef, due)
 	if err != nil {
 		return err
 	}
@@ -421,7 +425,18 @@ func (p *Procurement) enqueueGrnPosted(ctx context.Context, tx pgx.Tx, g *models
 			return err
 		}
 	}
-	key, payload, err := events.BuildGrnPosted(g.ID, poID, g.VendorID, g.ReceivedBy, lines)
+	// Monetary value of the received lines, so finance can book the GR/IR accrual.
+	var receivedValue float64
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(SUM(qty * unit_price), 0) FROM grn_lines WHERE grn_id = $1`, g.ID,
+	).Scan(&receivedValue); err != nil {
+		return err
+	}
+	valueStr := ""
+	if receivedValue > 0 {
+		valueStr = fmt.Sprintf("%.2f", receivedValue)
+	}
+	key, payload, err := events.BuildGrnPosted(g.ID, poID, g.VendorID, g.ReceivedBy, valueStr, lines)
 	if err != nil {
 		return err
 	}

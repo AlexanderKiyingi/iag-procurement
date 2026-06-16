@@ -68,6 +68,14 @@ type Config struct {
 	// requires approval. Set via PROCUREMENT_APPROVAL_THRESHOLD.
 	ApprovalThreshold float64
 
+	// RequireTieredApproval enforces the amount-band approval matrix: when true,
+	// requisitions can only reach "approved" through POST /requisitions/:id/approve
+	// (which collects the per-tier signatures), and a direct PATCH status=approved
+	// is rejected. Default false keeps the legacy flat PATCH path working so the
+	// feature can be rolled out before the UI adopts the new endpoint. Set via
+	// PROCUREMENT_REQUIRE_TIERED_APPROVAL.
+	RequireTieredApproval bool
+
 	// PeriodCloseEnabled turns on the daily background job that closes budgets
 	// whose period_end has passed. PeriodClosePolicy is the policy it applies
 	// ("lapse" releases open encumbrances, "carry" retains them).
@@ -154,6 +162,8 @@ func Load() (*Config, error) {
 		Audience:  getenv("AUDIENCE", "iag.procurement"),
 
 		ApprovalThreshold: parseFloat(os.Getenv("PROCUREMENT_APPROVAL_THRESHOLD"), 0),
+
+		RequireTieredApproval: strings.EqualFold(os.Getenv("PROCUREMENT_REQUIRE_TIERED_APPROVAL"), "true"),
 
 		PeriodCloseEnabled: strings.EqualFold(os.Getenv("PROCUREMENT_PERIOD_CLOSE_ENABLED"), "true"),
 		PeriodClosePolicy:  strings.ToLower(getenv("PROCUREMENT_PERIOD_CLOSE_POLICY", "lapse")),
