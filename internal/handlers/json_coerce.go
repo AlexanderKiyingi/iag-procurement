@@ -29,12 +29,24 @@ func coerceScalarStrings(t reflect.Type, m map[string]any) {
 			continue
 		}
 		s, ok := m[name].(string)
-		if !ok || s == "" {
+		if !ok {
 			continue
 		}
 		ft := t.Field(i).Type
 		for ft.Kind() == reflect.Ptr {
 			ft = ft.Elem()
+		}
+		// A blank numeric/bool form value clears the field: JSON null decodes to
+		// zero (value field) or nil (pointer); "" would fail the map→struct unmarshal.
+		if s == "" {
+			switch ft.Kind() {
+			case reflect.Float32, reflect.Float64,
+				reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+				reflect.Bool:
+				m[name] = nil
+			}
+			continue
 		}
 		switch ft.Kind() {
 		case reflect.Float32, reflect.Float64:
