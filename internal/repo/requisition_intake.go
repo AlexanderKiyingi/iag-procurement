@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"iag-procurement/backend/internal/models"
@@ -106,4 +107,40 @@ func (p *Procurement) ImportProcurementRequest(
 		Currency:  currency,
 		BudgetID:  strings.TrimSpace(budgetID),
 	}, nil
+}
+
+// GetRequisitionByOrigin looks up the requisition imported for a given source
+// system + reference (e.g. originSystem="fleet", originRef="FREQ-…"). It lets
+// the originating service reconcile its own record against procurement's
+// approval state without holding the procurement requisition id. Returns
+// ErrNotFound when no import exists yet.
+func (p *Procurement) GetRequisitionByOrigin(ctx context.Context, originSystem, originRef string) (*models.Requisition, error) {
+	originSystem = strings.TrimSpace(originSystem)
+	originRef = strings.TrimSpace(originRef)
+	if originSystem == "" || originRef == "" {
+		return nil, fmt.Errorf("%w: originSystem and originRef are required", ErrInvalidArgument)
+	}
+	var (
+		r               models.Requisition
+		created, needed *time.Time
+	)
+	err := p.pool.QueryRow(ctx, `
+		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, COALESCE(budget_id, '')
+		FROM requisitions WHERE origin_system = $1 AND origin_ref = $2`,
+		originSystem, originRef,
+	).Scan(&r.ID, &r.Title, &r.Dept, &r.Requester, &r.Priority, &r.Status,
+		&created, &needed, &r.Total, &r.Currency, &r.BudgetID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if created != nil {
+		r.CreatedAt = created.UTC().Format("2006-01-02")
+	}
+	if needed != nil {
+		r.NeededBy = needed.UTC().Format("2006-01-02")
+	}
+	return &r, nil
 }

@@ -14,13 +14,13 @@ import (
 const devJWTSecret = "dev-insecure-change-me"
 
 type Config struct {
-	Environment string
-	ServiceName string
-	Port        string
-	DatabaseURL string
-	RedisURL    string
-	AutoMigrate bool
-	SeedOnStartup bool
+	Environment     string
+	ServiceName     string
+	Port            string
+	DatabaseURL     string
+	RedisURL        string
+	AutoMigrate     bool
+	SeedOnStartup   bool
 	SeedCacheTTL    time.Duration
 	CORSAllowOrigin string
 
@@ -44,14 +44,23 @@ type Config struct {
 	JWTTTL               time.Duration
 	DefaultAdminPassword string
 
-	KafkaBrokers         []string
-	EventBusEnabled      bool
-		KafkaCommercialTopic  string
-		KafkaSupplyChainTopic string
-		KafkaOperationsTopic  string
-		KafkaConsumerGroup    string
-		KafkaSupplyChainGroup string
-		KafkaOperationsGroup  string
+	KafkaBrokers          []string
+	EventBusEnabled       bool
+	KafkaCommercialTopic  string
+	KafkaSupplyChainTopic string
+	KafkaOperationsTopic  string
+	KafkaFleetTopic       string
+	KafkaConsumerGroup    string
+	KafkaSupplyChainGroup string
+	KafkaOperationsGroup  string
+	KafkaFleetGroup       string
+
+	// FleetFuelBridgeEnabled subscribes procurement to iag.fleet and turns an
+	// approved fleet fuel request (fleet.fuel.request_approved) into a sourcing
+	// requisition, idempotent on (origin_system=fleet, origin_ref=requestId).
+	// Default false keeps the consumer off until the bridge is rolled out. Set
+	// via PROCUREMENT_FLEET_FUEL_BRIDGE_ENABLED.
+	FleetFuelBridgeEnabled bool
 
 	// AuthMode is "jwt" (platform Bearer+aud, production default) or "legacy"
 	// (local DB-backed users + HS256, kept for the standalone procurement app
@@ -147,14 +156,18 @@ func Load() (*Config, error) {
 		JWTTTL:               jwtTTL,
 		DefaultAdminPassword: os.Getenv("DEFAULT_ADMIN_PASSWORD"),
 
-		KafkaBrokers:         parseBrokers(os.Getenv("KAFKA_BROKERS")),
-		EventBusEnabled:      strings.EqualFold(os.Getenv("EVENT_BUS_ENABLED"), "true"),
+		KafkaBrokers:          parseBrokers(os.Getenv("KAFKA_BROKERS")),
+		EventBusEnabled:       strings.EqualFold(os.Getenv("EVENT_BUS_ENABLED"), "true"),
 		KafkaCommercialTopic:  getenv("KAFKA_COMMERCIAL_TOPIC", "iag.commercial"),
 		KafkaSupplyChainTopic: getenv("KAFKA_SUPPLY_CHAIN_TOPIC", "iag.supply-chain"),
 		KafkaOperationsTopic:  getenv("KAFKA_OPERATIONS_TOPIC", "iag.operations"),
+		KafkaFleetTopic:       getenv("KAFKA_FLEET_TOPIC", "iag.fleet"),
 		KafkaConsumerGroup:    getenv("KAFKA_CONSUMER_GROUP", "iag.procurement.commercial"),
 		KafkaSupplyChainGroup: getenv("KAFKA_SUPPLY_CHAIN_GROUP", "iag.procurement.supply-chain"),
 		KafkaOperationsGroup:  getenv("KAFKA_OPERATIONS_GROUP", "iag.procurement.operations"),
+		KafkaFleetGroup:       getenv("KAFKA_FLEET_GROUP", "iag.procurement.fleet"),
+
+		FleetFuelBridgeEnabled: strings.EqualFold(os.Getenv("PROCUREMENT_FLEET_FUEL_BRIDGE_ENABLED"), "true"),
 
 		AuthMode:  authMode,
 		JWTIssuer: getenv("JWT_ISSUER", "http://localhost:3001"),

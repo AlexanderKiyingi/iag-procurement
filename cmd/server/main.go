@@ -232,6 +232,20 @@ func main() {
 			}
 		}()
 		log.Printf("event bus: consuming %s as group %s (warehouse low stock)", cfg.KafkaOperationsTopic, cfg.KafkaOperationsGroup)
+
+		if cfg.FleetFuelBridgeEnabled {
+			fleetConsumer := consumer.NewFleet(consumer.FleetConfig{
+				Brokers: cfg.KafkaBrokers,
+				GroupID: cfg.KafkaFleetGroup,
+				Topic:   cfg.KafkaFleetTopic,
+			}, procurementRepo)
+			go func() {
+				if err := fleetConsumer.Run(workerCtx); err != nil && workerCtx.Err() == nil {
+					log.Printf("fleet consumer stopped: %v", err)
+				}
+			}()
+			log.Printf("event bus: consuming %s as group %s (fleet fuel requests)", cfg.KafkaFleetTopic, cfg.KafkaFleetGroup)
+		}
 	} else {
 		log.Printf("event bus: disabled (set EVENT_BUS_ENABLED=true and KAFKA_BROKERS)")
 	}

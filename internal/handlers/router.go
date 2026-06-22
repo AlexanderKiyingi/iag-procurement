@@ -104,6 +104,7 @@ func (a *API) Mount(r *gin.Engine) {
 				data.GET("/budgets", a.listBudgets)
 				data.GET("/requisitions", a.listRequisitions)
 				data.GET("/requisitions/approval-tiers", a.listApprovalTiers)
+				data.GET("/requisitions/by-origin", a.getRequisitionByOrigin)
 				data.GET("/rfqs", a.listRfqs)
 				data.GET("/rfqs/:id/quotes", a.listRfqQuotes)
 				data.GET("/purchase-orders", a.listPOs)
@@ -330,6 +331,24 @@ func (a *API) listRequisitions(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, d.Requisitions)
+}
+
+// getRequisitionByOrigin returns the requisition imported for a given source
+// system + reference (?system=fleet&ref=FREQ-…), so the originating service can
+// reconcile its record against procurement's approval state. 404 when no import
+// exists yet.
+func (a *API) getRequisitionByOrigin(c *gin.Context) {
+	if a.procurement == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "requisition lookup requires the database-backed store"})
+		return
+	}
+	system := c.Query("system")
+	ref := c.Query("ref")
+	row, err := a.procurement.GetRequisitionByOrigin(c.Request.Context(), system, ref)
+	if mapProcurementErr(c, err) {
+		return
+	}
+	c.JSON(http.StatusOK, row)
 }
 
 func (a *API) listRfqs(c *gin.Context) {
