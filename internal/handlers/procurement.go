@@ -84,7 +84,7 @@ func (a *API) postRequisition(c *gin.Context) {
 		return
 	}
 	var body postRequisitionBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -119,7 +119,7 @@ func (a *API) postPurchaseOrder(c *gin.Context) {
 		return
 	}
 	var body postPurchaseOrderBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

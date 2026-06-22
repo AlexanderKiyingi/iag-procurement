@@ -28,7 +28,7 @@ func (a *API) postVendor(c *gin.Context) {
 		return
 	}
 	var body postVendorBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -62,7 +62,7 @@ func (a *API) postItem(c *gin.Context) {
 		return
 	}
 	var body postItemBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -91,7 +91,7 @@ func (a *API) postBudget(c *gin.Context) {
 		return
 	}
 	var body postBudgetBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -151,7 +151,7 @@ func (a *API) postGrn(c *gin.Context) {
 		return
 	}
 	var body postGrnBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -194,7 +194,7 @@ func (a *API) postInvoice(c *gin.Context) {
 		return
 	}
 	var body postInvoiceBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -238,7 +238,7 @@ func (a *API) postContract(c *gin.Context) {
 		return
 	}
 	var body postContractBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

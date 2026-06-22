@@ -34,7 +34,7 @@ func (a *API) postRfqQuote(c *gin.Context) {
 		return
 	}
 	var body postRfqQuoteBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

@@ -43,7 +43,7 @@ func (a *API) patchVendor(c *gin.Context) {
 	}
 	id := strings.TrimSpace(c.Param("id"))
 	var body patchVendorBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -94,7 +94,7 @@ func (a *API) patchRequisition(c *gin.Context) {
 	}
 	id := strings.TrimSpace(c.Param("id"))
 	var body patchRequisitionBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

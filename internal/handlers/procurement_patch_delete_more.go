@@ -29,7 +29,7 @@ func (a *API) patchItem(c *gin.Context) {
 	}
 	id := strings.TrimSpace(c.Param("id"))
 	var body patchItemBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -81,7 +81,7 @@ func (a *API) patchBudget(c *gin.Context) {
 	}
 	id := strings.TrimSpace(c.Param("id"))
 	var body patchBudgetBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -196,7 +196,7 @@ func (a *API) patchContract(c *gin.Context) {
 	}
 	id := strings.TrimSpace(c.Param("id"))
 	var body patchContractBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -285,7 +285,7 @@ func (a *API) patchInvoice(c *gin.Context) {
 	}
 	id := strings.TrimSpace(c.Param("id"))
 	var body patchInvoiceBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -379,7 +379,7 @@ func (a *API) patchPurchaseOrder(c *gin.Context) {
 	}
 	id := strings.TrimSpace(c.Param("id"))
 	var body patchPoBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -453,7 +453,7 @@ func (a *API) patchGrn(c *gin.Context) {
 	}
 	id := strings.TrimSpace(c.Param("id"))
 	var body patchGrnBody
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
