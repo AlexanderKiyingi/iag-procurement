@@ -195,12 +195,7 @@ func (a *API) Mount(r *gin.Engine) {
 				agMut.Use(middleware.RequirePermission(rbac.ChangeGroup))
 				agMut.PUT("/admin/groups/:id/permissions", a.putGroupPermissions)
 			} else {
-				adminGone := sec.Group("/admin")
-				adminGone.GET("/*path", a.adminIAMDeprecated)
-				adminGone.POST("/*path", a.adminIAMDeprecated)
-				adminGone.PATCH("/*path", a.adminIAMDeprecated)
-				adminGone.PUT("/*path", a.adminIAMDeprecated)
-				adminGone.DELETE("/*path", a.adminIAMDeprecated)
+				a.mountDeprecatedAdminIAM(sec)
 			}
 		}
 	}
@@ -208,6 +203,27 @@ func (a *API) Mount(r *gin.Engine) {
 
 func (a *API) health(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "service": a.cfg.ServiceName})
+}
+
+// mountDeprecatedAdminIAM registers explicit 410 routes for the embedded IAM
+// admin API removed in jwt/gateway mode. Gin cannot register a catch-all
+// /admin/*path alongside /admin/audit-logs and /admin/budgets/close-period.
+func (a *API) mountDeprecatedAdminIAM(sec *gin.RouterGroup) {
+	paths := []string{
+		"/admin/permissions",
+		"/admin/groups",
+		"/admin/groups/:id/permissions",
+		"/admin/users",
+		"/admin/users/:id",
+		"/admin/users/:id/password",
+	}
+	for _, p := range paths {
+		sec.GET(p, a.adminIAMDeprecated)
+		sec.POST(p, a.adminIAMDeprecated)
+		sec.PATCH(p, a.adminIAMDeprecated)
+		sec.PUT(p, a.adminIAMDeprecated)
+		sec.DELETE(p, a.adminIAMDeprecated)
+	}
 }
 
 func (a *API) adminIAMDeprecated(c *gin.Context) {
