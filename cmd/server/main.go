@@ -85,12 +85,14 @@ func main() {
 	var verifier *authclient.Verifier
 	if cfg.AuthMode == "jwt" {
 		verifier = authclient.NewVerifier(cfg.JWKSURL, cfg.JWTIssuer, cfg.Audience)
-		initCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		if err := verifier.Refresh(initCtx); err != nil {
-			cancel()
-			log.Fatalf("jwks refresh: %v", err)
+		// Bounded retry, then degrade-to-background. A transient JWKS failure at
+		// boot (auth service restarting, DNS blip) must NOT crash the process —
+		// that turns a brief upstream hiccup into a Railway crash-loop. If the
+		// initial refresh never succeeds, the background loop keeps trying and
+		// auth requests fail closed (401) until keys are available.
+		if err := refreshJWKSWithRetry(ctx, verifier); err != nil {
+			log.Printf("procurement: jwks not ready at boot (%v) — continuing; background refresh will retry, auth fails closed until keys load", err)
 		}
-		cancel()
 		go jwksRefreshLoop(verifier)
 	}
 	platformAuth := middleware.NewPlatformAuth(middleware.PlatformAuthOptions{
@@ -308,6 +310,36 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
+}
+
+// refreshJWKSWithRetry attempts the initial JWKS fetch a bounded number of
+// times with linear backoff. It returns the last error so the caller can
+// degrade to the background refresh loop instead of crashing the process.
+func refreshJWKSWithRetry(ctx context.Context, v *authclient.Verifier) error {
+	const attempts = 5
+	var err error
+	for i := 0; i < attempts; i++ {
+		attemptCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err = v.Refresh(attemptCtx)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if i == attempts-1 {
+			break // last attempt failed — don't sleep, let the caller degrade
+		}
+		backoff := time.Duration(i+1) * 2 * time.Second
+		log.Printf("procurement: jwks refresh attempt %d/%d failed (%v) — retrying in %s", i+1, attempts, err, backoff)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+	}
+	return err
 }
 
 func jwksRefreshLoop(v *authclient.Verifier) {

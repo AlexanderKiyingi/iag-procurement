@@ -69,7 +69,7 @@ ENV PORT=4009 \
     AUTO_MIGRATE=true \
     GIN_MODE=release \
     ENVIRONMENT=production \
-    AUTH_MODE=gateway
+    AUTH_MODE=jwt
 EXPOSE 4009
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
   CMD ["/app/healthcheck"]
@@ -82,7 +82,7 @@ ENV PORT=4009 \
     AUTO_MIGRATE=true \
     GIN_MODE=release \
     ENVIRONMENT=production \
-    AUTH_MODE=gateway
+    AUTH_MODE=jwt
 EXPOSE 4009
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
   CMD ["/app/healthcheck"]

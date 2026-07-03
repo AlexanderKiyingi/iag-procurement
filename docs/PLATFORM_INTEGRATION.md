@@ -12,7 +12,9 @@ Examples:
 - Me: `GET /api/v1/procurement/api/v1/auth/me` (platform Bearer token)
 - Data: `GET /api/v1/procurement/api/v1/requisitions`
 
-The gateway verifies **platform** JWTs and forwards identity as `X-IAG-*` headers. Procurement runs with `AUTH_MODE=gateway` and enforces permissions from those headers (codenames seeded in **iag-authentication**, e.g. `procurement.view_seed`).
+The gateway verifies **platform** JWTs (`aud=iag.gateway`) and forwards the `Authorization: Bearer` header unchanged. Procurement runs with `AUTH_MODE=jwt` (default), re-verifies the token locally via JWKS (`aud=iag.procurement`), and enforces permissions from JWT claims (codenames seeded in **iag-authentication**, e.g. `procurement.view_seed`).
+
+> **Removed:** `AUTH_MODE=gateway` and `GATEWAY_INTERNAL_SECRET` / `X-IAG-*` header trust. Production always uses Bearer JWT + JWKS.
 
 Compose: `UPSTREAM_PROCUREMENT=http://procurement:4009` on `api-gateway`.
 
@@ -21,27 +23,28 @@ Compose: `UPSTREAM_PROCUREMENT=http://procurement:4009` on `api-gateway`.
 | Component | Role |
 |-----------|------|
 | **iag-authentication** | Users, groups (`procurement-admin`, `procurement-member`, `procurement-viewer`), `procurement.*` permissions |
-| **api-gateway** | OAuth2 / JWT validation → `X-IAG-User-Id`, `X-IAG-Email`, `X-IAG-Permissions`, … |
-| **procurement** | Trusts gateway headers (`AUTH_MODE=gateway`) or JWKS (`AUTH_MODE=jwt`) |
+| **api-gateway** | OAuth2 / JWT validation (`aud=iag.gateway`) → forwards Bearer token |
+| **procurement** | Re-verifies Bearer JWT via JWKS (`AUTH_MODE=jwt`, `aud=iag.procurement`) |
 
 ### Auth modes
 
 | `AUTH_MODE` | Use |
 |-------------|-----|
-| `gateway` | Docker / production behind api-gateway (default) |
-| `jwt` | Local dev with direct Bearer token and JWKS |
+| `jwt` | Production and local dev with Bearer token + JWKS (default) |
 | `legacy` | Local-only HS256 login at `POST /api/v1/auth/login` and in-service RBAC admin |
 
-### Env (gateway)
+### Env (production / jwt)
 
 ```env
-AUTH_MODE=gateway
-GATEWAY_INTERNAL_SECRET=...   # min 16 chars, shared with api-gateway
+AUTH_MODE=jwt
 JWT_ISSUER=http://authentication:3001
 JWKS_URL=http://authentication:3001/.well-known/jwks.json
+AUDIENCE=iag.procurement
+SERVICE_CLIENT_ID=iag-procurement
+SERVICE_CLIENT_SECRET=...
 ```
 
-Clients obtain a token from authentication (`POST /oauth/token` or gateway login flow), then call procurement via the gateway with `Authorization: Bearer <platform token>`.
+Clients obtain a token from authentication (`POST /oauth/token` or gateway login flow), then call procurement via the gateway with `Authorization: Bearer <platform token>`. The JWT must include `aud=iag.procurement` (in addition to `iag.gateway` for the gateway hop).
 
 Assign users to `procurement-member` or `procurement-admin` in authentication for mutate access.
 
@@ -103,4 +106,3 @@ Token via authentication, then:
 ```bash
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/procurement/api/v1/auth/me
 ```
-
