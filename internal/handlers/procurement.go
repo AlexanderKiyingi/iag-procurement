@@ -69,6 +69,10 @@ func mapProcurementErr(c *gin.Context, err error) bool {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return true
 	}
+	if errors.Is(err, repo.ErrConflict) {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return true
+	}
 	var pe *pgconn.PgError
 	if errors.As(err, &pe) && pe.Code == "23503" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid reference (budget, vendor, or item)", "detail": pe.Message})
@@ -76,6 +80,34 @@ func mapProcurementErr(c *gin.Context, err error) bool {
 	}
 	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	return true
+}
+
+// getPurchaseOrder returns a single PO with its lines (including received_qty)
+// so the receiving UI can pre-fill a GRN against it.
+func (a *API) getPurchaseOrder(c *gin.Context) {
+	if a.procurement == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "purchase-order lookup requires the database-backed store"})
+		return
+	}
+	row, err := a.procurement.GetPurchaseOrder(c.Request.Context(), strings.TrimSpace(c.Param("id")))
+	if mapProcurementErr(c, err) {
+		return
+	}
+	c.JSON(http.StatusOK, row)
+}
+
+// approveInvoice clears a matched invoice for payment. Returns 409 when the
+// three-way match has not resolved to "Matched".
+func (a *API) approveInvoice(c *gin.Context) {
+	if a.procurement == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "procurement writes not configured"})
+		return
+	}
+	row, err := a.procurement.ApproveInvoice(c.Request.Context(), strings.TrimSpace(c.Param("id")), authActorEmail(c))
+	if mapProcurementErr(c, err) {
+		return
+	}
+	c.JSON(http.StatusOK, row)
 }
 
 func (a *API) postRequisition(c *gin.Context) {

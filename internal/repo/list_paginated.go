@@ -2,8 +2,12 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"iag-procurement/backend/internal/models"
 )
@@ -175,6 +179,50 @@ func (p *Procurement) ListPurchaseOrders(ctx context.Context, limit, offset int,
 		}
 	}
 	return out, nil
+}
+
+// GetPurchaseOrder returns a single PO with its lines (including running
+// received_qty), used by the receiving UI to pre-fill a GRN against the PO.
+// Returns ErrNotFound when the id does not exist.
+func (p *Procurement) GetPurchaseOrder(ctx context.Context, id string) (*models.Po, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("%w: id is required", ErrInvalidArgument)
+	}
+	var po models.Po
+	var created, expected *time.Time
+	err := p.pool.QueryRow(ctx, `
+		SELECT id, vendor_id, title, total, currency, status, payment_status, created_at, expected_date, COALESCE(budget_id, '')
+		FROM purchase_orders WHERE id = $1`, id,
+	).Scan(&po.ID, &po.VendorID, &po.Title, &po.Total, &po.Currency, &po.Status, &po.PaymentStatus,
+		&created, &expected, &po.BudgetID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	po.CreatedAt = dayStr(created)
+	po.ExpectedDate = dayStr(expected)
+	po.Items = []models.PoLine{}
+
+	lineRows, err := p.pool.Query(ctx, `
+		SELECT item_id, qty, unit_price, received_qty FROM po_lines WHERE po_id = $1 ORDER BY id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer lineRows.Close()
+	for lineRows.Next() {
+		var ln models.PoLine
+		if err := lineRows.Scan(&ln.ItemID, &ln.Qty, &ln.Price, &ln.ReceivedQty); err != nil {
+			return nil, err
+		}
+		po.Items = append(po.Items, ln)
+	}
+	if err := lineRows.Err(); err != nil {
+		return nil, err
+	}
+	return &po, nil
 }
 
 // ListInvoices returns a filtered, paged slice of invoices (q matches invoice

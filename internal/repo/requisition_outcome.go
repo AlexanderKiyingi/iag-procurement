@@ -323,6 +323,12 @@ func (p *Procurement) recognizePOSpendOnReceipt(ctx context.Context, tx pgx.Tx, 
 		if _, err := tx.Exec(ctx, `UPDATE purchase_orders SET spent_recognized = spent_recognized + $2 WHERE id = $1`, poID, amt); err != nil {
 			return err
 		}
+		if err := p.applyReceivedQty(ctx, tx, g.ID, poID, +1); err != nil {
+			return err
+		}
+		if err := p.recomputePOReceiptStatus(ctx, tx, poID); err != nil {
+			return err
+		}
 		_, err = tx.Exec(ctx, `UPDATE grns SET budget_recognized = TRUE, recognized_amount = $2 WHERE id = $1`, g.ID, amt)
 		return err
 
@@ -349,11 +355,69 @@ func (p *Procurement) recognizePOSpendOnReceipt(ctx context.Context, tx pgx.Tx, 
 					return err
 				}
 			}
+			if err := p.applyReceivedQty(ctx, tx, g.ID, poID, -1); err != nil {
+				return err
+			}
+			if err := p.recomputePOReceiptStatus(ctx, tx, poID); err != nil {
+				return err
+			}
 		}
 		_, err := tx.Exec(ctx, `UPDATE grns SET budget_recognized = FALSE, recognized_amount = 0 WHERE id = $1`, g.ID)
 		return err
 	}
 	return nil
+}
+
+// applyReceivedQty adds (sign=+1) or reverses (sign=-1) a GRN's received line
+// quantities onto the matching PO lines, so a PO carries a running received_qty
+// per line. Matched by item_id; GRN lines for items not on the PO are ignored.
+// received_qty is floored at 0 on reversal.
+func (p *Procurement) applyReceivedQty(ctx context.Context, tx pgx.Tx, grnID, poID string, sign int) error {
+	if strings.TrimSpace(poID) == "" {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `
+		UPDATE po_lines pl
+		SET received_qty = GREATEST(pl.received_qty + ($3 * gl.qty), 0)
+		FROM (SELECT item_id, SUM(qty) AS qty FROM grn_lines WHERE grn_id = $1 GROUP BY item_id) gl
+		WHERE pl.po_id = $2 AND pl.item_id = gl.item_id`,
+		grnID, poID, sign)
+	return err
+}
+
+// recomputePOReceiptStatus sets the PO's status from its line receipts: fully
+// received → "Received", partially → "Partially Received", none → "Approved"
+// (the receivable baseline). Leaves POs with no lines untouched, and never
+// overrides a terminal cancelled/rejected state.
+func (p *Procurement) recomputePOReceiptStatus(ctx context.Context, tx pgx.Tx, poID string) error {
+	if strings.TrimSpace(poID) == "" {
+		return nil
+	}
+	var lineCount, fullyReceived int
+	var anyReceived bool
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(*),
+		       COUNT(*) FILTER (WHERE received_qty >= qty),
+		       COALESCE(BOOL_OR(received_qty > 0), FALSE)
+		FROM po_lines WHERE po_id = $1`, poID,
+	).Scan(&lineCount, &fullyReceived, &anyReceived); err != nil {
+		return err
+	}
+	if lineCount == 0 {
+		return nil
+	}
+	next := "Approved"
+	switch {
+	case fullyReceived == lineCount:
+		next = "Received"
+	case anyReceived:
+		next = "Partially Received"
+	}
+	_, err := tx.Exec(ctx, `
+		UPDATE purchase_orders SET status = $2
+		WHERE id = $1 AND lower(status) NOT IN ('cancelled','rejected','draft','pending approval')`,
+		poID, next)
+	return err
 }
 
 // enqueueInvoiceReceived writes procurement.invoice.received into the outbox in

@@ -161,18 +161,18 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 
 	linesByPO := map[string][]models.PoLine{}
 	{
-		rows, err := s.pool.Query(ctx, `SELECT po_id, item_id, qty, unit_price FROM po_lines ORDER BY po_id, id`)
+		rows, err := s.pool.Query(ctx, `SELECT po_id, item_id, qty, unit_price, received_qty FROM po_lines ORDER BY po_id, id`)
 		if err != nil {
 			return nil, fmt.Errorf("po_lines: %w", err)
 		}
 		for rows.Next() {
 			var poID, itemID string
-			var qty, price float64
-			if err := rows.Scan(&poID, &itemID, &qty, &price); err != nil {
+			var qty, price, receivedQty float64
+			if err := rows.Scan(&poID, &itemID, &qty, &price, &receivedQty); err != nil {
 				rows.Close()
 				return nil, err
 			}
-			linesByPO[poID] = append(linesByPO[poID], models.PoLine{ItemID: itemID, Qty: qty, Price: price})
+			linesByPO[poID] = append(linesByPO[poID], models.PoLine{ItemID: itemID, Qty: qty, Price: price, ReceivedQty: receivedQty})
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
@@ -183,7 +183,7 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 
 	{
 		rows, err := s.pool.Query(ctx, `
-		SELECT id, vendor_id, title, total, currency, status, created_at, expected_date, budget_id
+		SELECT id, vendor_id, title, total, currency, status, payment_status, created_at, expected_date, budget_id
 		FROM purchase_orders ORDER BY id`)
 		if err != nil {
 			return nil, fmt.Errorf("purchase_orders: %w", err)
@@ -191,7 +191,7 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 		for rows.Next() {
 			var p models.Po
 			var ca, ex *time.Time
-			if err := rows.Scan(&p.ID, &p.VendorID, &p.Title, &p.Total, &p.Currency, &p.Status, &ca, &ex, &p.BudgetID); err != nil {
+			if err := rows.Scan(&p.ID, &p.VendorID, &p.Title, &p.Total, &p.Currency, &p.Status, &p.PaymentStatus, &ca, &ex, &p.BudgetID); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -260,7 +260,7 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 
 	{
 		rows, err := s.pool.Query(ctx, `
-		SELECT id, invoice_no, vendor_id, po_id, amount, currency, status, match_status, invoice_date
+		SELECT id, invoice_no, vendor_id, po_id, grn_id, amount, currency, status, match_status, invoice_date, payment_date, payment_method
 		FROM invoices ORDER BY id`)
 		if err != nil {
 			return nil, fmt.Errorf("invoices: %w", err)
@@ -268,15 +268,17 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 		for rows.Next() {
 			var inv models.Invoice
 			var invNo *string
-			var poID *string
-			var idate *time.Time
-			if err := rows.Scan(&inv.ID, &invNo, &inv.VendorID, &poID, &inv.Amount, &inv.Currency, &inv.Status, &inv.MatchStatus, &idate); err != nil {
+			var poID, grnID *string
+			var idate, pdate *time.Time
+			if err := rows.Scan(&inv.ID, &invNo, &inv.VendorID, &poID, &grnID, &inv.Amount, &inv.Currency, &inv.Status, &inv.MatchStatus, &idate, &pdate, &inv.PaymentMethod); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			inv.InvoiceNo = invNo
 			inv.PoID = poID
+			inv.GrnID = grnID
 			inv.InvoiceDate = fdate(idate)
+			inv.PaymentDate = fdate(pdate)
 			out.Invoices = append(out.Invoices, inv)
 		}
 		if err := rows.Err(); err != nil {

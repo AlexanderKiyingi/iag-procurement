@@ -47,6 +47,7 @@ var bootstrapPermissions = []permDef{
 	{DeleteGrn, "Can delete GRN", "Delete goods receipts"},
 	{AddInvoice, "Can add invoice", "Capture vendor invoices"},
 	{ChangeInvoice, "Can change invoice", "Update vendor invoices"},
+	{ApproveInvoice, "Can approve invoice", "Approve matched invoices for payment"},
 	{DeleteInvoice, "Can delete invoice", "Delete vendor invoices"},
 	{AddContract, "Can add contract", "Create vendor contracts"},
 	{ChangeContract, "Can change contract", "Update vendor contracts"},

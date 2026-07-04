@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -11,6 +12,38 @@ import (
 
 	"iag-procurement/backend/internal/models"
 )
+
+// GetInvoice returns a single invoice with its link + settlement fields.
+// Returns ErrNotFound when the id does not exist.
+func (p *Procurement) GetInvoice(ctx context.Context, id string) (*models.Invoice, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("%w: id is required", ErrInvalidArgument)
+	}
+	var inv models.Invoice
+	var invNo, poID, grnID *string
+	var idate, pdate *time.Time
+	err := p.pool.QueryRow(ctx, `
+		SELECT id, invoice_no, vendor_id, po_id, grn_id, amount, currency, status, match_status, invoice_date, payment_date, payment_method
+		FROM invoices WHERE id = $1`, id,
+	).Scan(&inv.ID, &invNo, &inv.VendorID, &poID, &grnID, &inv.Amount, &inv.Currency, &inv.Status, &inv.MatchStatus, &idate, &pdate, &inv.PaymentMethod)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	inv.InvoiceNo = invNo
+	inv.PoID = poID
+	inv.GrnID = grnID
+	if idate != nil {
+		inv.InvoiceDate = idate.UTC().Format("2006-01-02")
+	}
+	if pdate != nil {
+		inv.PaymentDate = pdate.UTC().Format("2006-01-02")
+	}
+	return &inv, nil
+}
 
 // CreateVendor inserts a vendor master row and audit trail entry.
 func (p *Procurement) CreateVendor(ctx context.Context, name, logo, category, contact, email, phone, country, terms string, rating float64, status string, auditUser string) (*models.Vendor, error) {
@@ -317,15 +350,15 @@ func (p *Procurement) CreateInvoice(ctx context.Context, vendorID string, poID *
 	// No PO → "No PO"; PO with no posted GRN → "Pending GRN"; received and the
 	// amount agrees with the PO total → "Matched"; received but amounts differ
 	// → "Amount variance". Buyers clear variances downstream before payment.
-	matchStatus, err := p.deriveInvoiceMatchStatus(ctx, tx, poID, amount)
+	matchStatus, grnID, err := p.deriveInvoiceMatchStatus(ctx, tx, poID, amount)
 	if err != nil {
 		return nil, err
 	}
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO invoices (id, invoice_no, vendor_id, po_id, amount, currency, status, match_status, invoice_date)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		id, invNo, vendorID, poID, amount, currency, status, matchStatus, idate,
+		INSERT INTO invoices (id, invoice_no, vendor_id, po_id, grn_id, amount, currency, status, match_status, invoice_date)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		id, invNo, vendorID, poID, grnID, amount, currency, status, matchStatus, idate,
 	); err != nil {
 		return nil, err
 	}
@@ -340,7 +373,7 @@ func (p *Procurement) CreateInvoice(ctx context.Context, vendorID string, poID *
 		return nil, err
 	}
 	out := models.Invoice{
-		ID: id, VendorID: vendorID, PoID: poID, Amount: amount, Currency: currency,
+		ID: id, VendorID: vendorID, PoID: poID, GrnID: grnID, Amount: amount, Currency: currency,
 		Status: status, MatchStatus: matchStatus, InvoiceDate: idate.UTC().Format("2006-01-02"),
 	}
 	if invoiceNo != nil && strings.TrimSpace(*invoiceNo) != "" {
@@ -358,38 +391,106 @@ func (p *Procurement) CreateInvoice(ctx context.Context, vendorID string, poID *
 
 // deriveInvoiceMatchStatus runs the PO/GRN side of the three-way match for a new
 // invoice, inside the caller's transaction. Returns one of "No PO",
-// "Pending GRN", "Matched", or "Amount variance".
-func (p *Procurement) deriveInvoiceMatchStatus(ctx context.Context, tx pgx.Tx, poID *string, amount float64) (string, error) {
+// "Pending GRN", "Matched", or "Amount variance", plus the id of the posted GRN
+// it matched against (nil when there is no PO or no posted receipt yet).
+func (p *Procurement) deriveInvoiceMatchStatus(ctx context.Context, tx pgx.Tx, poID *string, amount float64) (string, *string, error) {
 	pid := ""
 	if poID != nil {
 		pid = strings.TrimSpace(*poID)
 	}
 	if pid == "" {
-		return "No PO", nil
+		return "No PO", nil, nil
 	}
 	var poTotal float64
 	err := tx.QueryRow(ctx, `SELECT total FROM purchase_orders WHERE id = $1`, pid).Scan(&poTotal)
 	if err == pgx.ErrNoRows {
-		return "No PO", nil
+		return "No PO", nil, nil
 	}
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	var received bool
+	var grnID *string
 	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM grns WHERE po_id = $1 AND lower(status) IN ('posted','received'))`,
+		SELECT id FROM grns WHERE po_id = $1 AND lower(status) IN ('posted','received')
+		ORDER BY received_date DESC NULLS LAST, id DESC LIMIT 1`,
 		pid,
-	).Scan(&received); err != nil {
-		return "", err
+	).Scan(&grnID); err != nil && err != pgx.ErrNoRows {
+		return "", nil, err
 	}
 	switch {
-	case !received:
-		return "Pending GRN", nil
+	case grnID == nil:
+		return "Pending GRN", nil, nil
 	case math.Abs(amount-poTotal) <= 0.01:
-		return "Matched", nil
+		return "Matched", grnID, nil
 	default:
-		return "Amount variance", nil
+		return "Amount variance", grnID, nil
 	}
+}
+
+// ApproveInvoice clears an invoice for payment, but only once its three-way
+// match has resolved to "Matched" (PO + posted GRN + amount agreement). A
+// pending or variance match returns ErrConflict so the buyer resolves it first;
+// this is the gate that stops an unmatched invoice reaching finance. The status
+// is recomputed from live data inside the tx to avoid trusting a stale value.
+func (p *Procurement) ApproveInvoice(ctx context.Context, id, auditUser string) (*models.Invoice, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("%w: id is required", ErrInvalidArgument)
+	}
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var poID *string
+	var amount float64
+	var status string
+	err = tx.QueryRow(ctx, `SELECT po_id, amount, status FROM invoices WHERE id = $1 FOR UPDATE`, id).
+		Scan(&poID, &amount, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if strings.EqualFold(strings.TrimSpace(status), "Paid") {
+		return nil, fmt.Errorf("%w: invoice %s is already paid", ErrConflict, id)
+	}
+
+	match, grnID, err := p.deriveInvoiceMatchStatus(ctx, tx, poID, amount)
+	if err != nil {
+		return nil, err
+	}
+	if match != "Matched" {
+		return nil, fmt.Errorf("%w: invoice cannot be approved while three-way match is %q", ErrConflict, match)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE invoices SET status = 'Approved', match_status = $2, grn_id = COALESCE(grn_id, $3) WHERE id = $1`,
+		id, match, grnID,
+	); err != nil {
+		return nil, err
+	}
+	if auditUser == "" {
+		auditUser = "unknown"
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_entries (username, action, target, detail)
+		VALUES ($1,$2,$3,$4)`,
+		auditUser, "approve", id, "invoice approved (three-way match cleared)",
+	); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	out, err := p.GetInvoice(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // CreateContract inserts a vendor contract row and audit trail entry.

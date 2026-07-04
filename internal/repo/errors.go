@@ -12,3 +12,7 @@ var ErrNotFound = errors.New("not found")
 // they hold the route permission (e.g. approving one's own requisition/PO).
 // Maps to HTTP 403.
 var ErrForbidden = errors.New("forbidden")
+
+// ErrConflict marks a state-precondition failure (e.g. approving an invoice
+// whose three-way match has not cleared). Maps to HTTP 409.
+var ErrConflict = errors.New("conflict")

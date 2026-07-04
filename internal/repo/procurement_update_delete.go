@@ -139,6 +139,19 @@ func (p *Procurement) UpdateRequisition(
 	if budgetID != nil && strings.TrimSpace(*budgetID) == "" {
 		return nil, fmt.Errorf("%w: budgetId cannot be blank", ErrInvalidArgument)
 	}
+	// Lifecycle transitions must run through the tiered approval engine
+	// (POST /requisitions/:id/approve|reject) and PO issue (RFQ award / PO
+	// create), which maintain the per-tier signature ledger and segregation of
+	// duties. A free-text PATCH into these states would desync that ledger, so
+	// reject it and point the caller at the workflow endpoint.
+	if status != nil {
+		switch strings.ToLower(strings.TrimSpace(*status)) {
+		case "approved", "rejected":
+			return nil, fmt.Errorf("%w: use the approve/reject endpoint to change a requisition's approval state", ErrConflict)
+		case "ordered":
+			return nil, fmt.Errorf("%w: a requisition becomes Ordered when a PO is raised against it", ErrConflict)
+		}
+	}
 
 	var neededByArg interface{}
 	if neededBy == nil {

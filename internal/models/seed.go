@@ -82,22 +82,24 @@ type RfqQuote struct {
 }
 
 type PoLine struct {
-	ItemID string  `json:"itemId"`
-	Qty    float64 `json:"qty"`
-	Price  float64 `json:"price"`
+	ItemID      string  `json:"itemId"`
+	Qty         float64 `json:"qty"`
+	Price       float64 `json:"price"`
+	ReceivedQty float64 `json:"receivedQty"`
 }
 
 type Po struct {
-	ID           string   `json:"id"`
-	VendorID     string   `json:"vendorId"`
-	Title        string   `json:"title"`
-	Total        float64  `json:"total"`
-	Currency     string   `json:"currency"`
-	Status       string   `json:"status"`
-	CreatedAt    string   `json:"createdAt"`
-	ExpectedDate string   `json:"expectedDate"`
-	BudgetID     string   `json:"budgetId"`
-	Items        []PoLine `json:"items"`
+	ID            string   `json:"id"`
+	VendorID      string   `json:"vendorId"`
+	Title         string   `json:"title"`
+	Total         float64  `json:"total"`
+	Currency      string   `json:"currency"`
+	Status        string   `json:"status"`
+	PaymentStatus string   `json:"paymentStatus"`
+	CreatedAt     string   `json:"createdAt"`
+	ExpectedDate  string   `json:"expectedDate"`
+	BudgetID      string   `json:"budgetId"`
+	Items         []PoLine `json:"items"`
 }
 
 type Grn struct {
@@ -119,16 +121,19 @@ type GrnLine struct {
 }
 
 type Invoice struct {
-	ID           string  `json:"id"`
-	InvoiceNo    *string `json:"invoiceNo,omitempty"`
-	VendorID     string  `json:"vendorId"`
-	PoID         *string `json:"poId"`
-	Amount       float64 `json:"amount"`
-	Total        *float64 `json:"total,omitempty"`
-	Currency     string  `json:"currency"`
-	Status       string  `json:"status"`
-	MatchStatus  string  `json:"matchStatus"`
-	InvoiceDate  string  `json:"invoiceDate"`
+	ID            string   `json:"id"`
+	InvoiceNo     *string  `json:"invoiceNo,omitempty"`
+	VendorID      string   `json:"vendorId"`
+	PoID          *string  `json:"poId"`
+	GrnID         *string  `json:"grnId"`
+	Amount        float64  `json:"amount"`
+	Total         *float64 `json:"total,omitempty"`
+	Currency      string   `json:"currency"`
+	Status        string   `json:"status"`
+	MatchStatus   string   `json:"matchStatus"`
+	InvoiceDate   string   `json:"invoiceDate"`
+	PaymentDate   string   `json:"paymentDate,omitempty"`
+	PaymentMethod string   `json:"paymentMethod,omitempty"`
 }
 
 type Contract struct {

@@ -39,6 +39,9 @@ const (
 	AddInvoice       = "procurement.add_invoice"
 	ChangeInvoice    = "procurement.change_invoice"
 	DeleteInvoice    = "procurement.delete_invoice"
+	// ApproveInvoice gates POST /invoices/:id/approve, which enforces a cleared
+	// three-way match before an invoice can be sent to finance for payment.
+	ApproveInvoice   = "procurement.approve_invoice"
 	AddContract      = "procurement.add_contract"
 	ChangeContract   = "procurement.change_contract"
 	DeleteContract   = "procurement.delete_contract"

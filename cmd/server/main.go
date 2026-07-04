@@ -248,6 +248,20 @@ func main() {
 			}()
 			log.Printf("event bus: consuming %s as group %s (fleet fuel requests)", cfg.KafkaFleetTopic, cfg.KafkaFleetGroup)
 		}
+
+		if cfg.FinancePaymentWritebackEnabled {
+			financeConsumer := consumer.NewFinance(consumer.FinanceConfig{
+				Brokers: cfg.KafkaBrokers,
+				GroupID: cfg.KafkaFinanceGroup,
+				Topic:   cfg.KafkaFinanceTopic,
+			}, procurementRepo)
+			go func() {
+				if err := financeConsumer.Run(workerCtx); err != nil && workerCtx.Err() == nil {
+					log.Printf("finance consumer stopped: %v", err)
+				}
+			}()
+			log.Printf("event bus: consuming %s as group %s (finance payment writeback)", cfg.KafkaFinanceTopic, cfg.KafkaFinanceGroup)
+		}
 	} else {
 		log.Printf("event bus: disabled (set EVENT_BUS_ENABLED=true and KAFKA_BROKERS)")
 	}

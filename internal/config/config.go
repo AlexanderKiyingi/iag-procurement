@@ -50,10 +50,18 @@ type Config struct {
 	KafkaSupplyChainTopic string
 	KafkaOperationsTopic  string
 	KafkaFleetTopic       string
+	KafkaFinanceTopic     string
 	KafkaConsumerGroup    string
 	KafkaSupplyChainGroup string
 	KafkaOperationsGroup  string
 	KafkaFleetGroup       string
+	KafkaFinanceGroup     string
+
+	// FinancePaymentWritebackEnabled subscribes procurement to iag.finance and
+	// reflects finance.payment.made (AP) settlements back onto the originating
+	// invoice + PO. Default false keeps the consumer off until enabled via
+	// PROCUREMENT_FINANCE_PAYMENT_WRITEBACK_ENABLED.
+	FinancePaymentWritebackEnabled bool
 
 	// FleetFuelBridgeEnabled subscribes procurement to iag.fleet and turns an
 	// approved fleet fuel request (fleet.fuel.request_approved) into a sourcing
@@ -162,12 +170,15 @@ func Load() (*Config, error) {
 		KafkaSupplyChainTopic: getenv("KAFKA_SUPPLY_CHAIN_TOPIC", "iag.supply-chain"),
 		KafkaOperationsTopic:  getenv("KAFKA_OPERATIONS_TOPIC", "iag.operations"),
 		KafkaFleetTopic:       getenv("KAFKA_FLEET_TOPIC", "iag.fleet"),
+		KafkaFinanceTopic:     getenv("KAFKA_FINANCE_TOPIC", "iag.finance"),
 		KafkaConsumerGroup:    getenv("KAFKA_CONSUMER_GROUP", "iag.procurement.commercial"),
 		KafkaSupplyChainGroup: getenv("KAFKA_SUPPLY_CHAIN_GROUP", "iag.procurement.supply-chain"),
 		KafkaOperationsGroup:  getenv("KAFKA_OPERATIONS_GROUP", "iag.procurement.operations"),
 		KafkaFleetGroup:       getenv("KAFKA_FLEET_GROUP", "iag.procurement.fleet"),
+		KafkaFinanceGroup:     getenv("KAFKA_FINANCE_GROUP", "iag.procurement.finance"),
 
-		FleetFuelBridgeEnabled: strings.EqualFold(os.Getenv("PROCUREMENT_FLEET_FUEL_BRIDGE_ENABLED"), "true"),
+		FleetFuelBridgeEnabled:         strings.EqualFold(os.Getenv("PROCUREMENT_FLEET_FUEL_BRIDGE_ENABLED"), "true"),
+		FinancePaymentWritebackEnabled: strings.EqualFold(os.Getenv("PROCUREMENT_FINANCE_PAYMENT_WRITEBACK_ENABLED"), "true"),
 
 		AuthMode:  authMode,
 		JWTIssuer: getenv("JWT_ISSUER", "http://localhost:3001"),
