@@ -39,7 +39,7 @@ jobs:
       - name: Create service schema
         env:
           PGPASSWORD: iag_dev
-        run: psql -h localhost -U iag -d iag_platform -c 'CREATE SCHEMA IF NOT EXISTS iag_procurement;'
+        run: psql -h localhost -U iag -d iag_platform -c 'CREATE SCHEMA IF NOT EXISTS procurement;'
 
       - uses: actions/setup-go@v5
         with:
@@ -54,13 +54,13 @@ jobs:
       - name: Build
         run: go build -v ./...
         env:
-          DATABASE_URL: postgres://iag:iag_dev@localhost:5432/iag_platform?sslmode=disable&search_path=iag_procurement
+          DATABASE_URL: postgres://iag:iag_dev@localhost:5432/iag_platform?sslmode=disable&search_path=procurement
           REDIS_URL: redis://localhost:6379/0
 
       - name: Test
         run: go test ./...
         env:
-          DATABASE_URL: postgres://iag:iag_dev@localhost:5432/iag_platform?sslmode=disable&search_path=iag_procurement
+          DATABASE_URL: postgres://iag:iag_dev@localhost:5432/iag_platform?sslmode=disable&search_path=procurement
           REDIS_URL: redis://localhost:6379/0
 
   docker:
