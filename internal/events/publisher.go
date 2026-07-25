@@ -18,6 +18,12 @@ const (
 	TypeRequisitionRejected = "procurement.requisition.rejected"
 	TypeInvoiceReceived     = "procurement.invoice.received"
 	TypeGrnPosted           = "procurement.grn.posted"
+	// TypeVendorUpserted is the canonical cross-service vendor/supplier master
+	// event (party.vendor.upserted). Procurement emits it on local vendor
+	// create/update/delete so iag-finance and iag-supply-chain can keep a
+	// matching party master keyed on the shared party_id. Local delete is emitted
+	// as an upsert with status "Inactive" (soft deactivate), never a hard delete.
+	TypeVendorUpserted = "party.vendor.upserted"
 )
 
 // platformEvent is the canonical CloudEvents-compatible envelope used by IAG.

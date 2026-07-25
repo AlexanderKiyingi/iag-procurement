@@ -6,8 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"iag-procurement/backend/internal/events"
 	"iag-procurement/backend/internal/models"
 )
 
@@ -36,6 +38,9 @@ func (p *Procurement) UpdateVendor(
 	}
 	defer tx.Rollback(ctx)
 
+	// Backfill a party_id for pre-mesh vendors so an edited legacy vendor joins
+	// the mesh; COALESCE keeps any existing shared key untouched.
+	newPartyID := uuid.NewString()
 	ct, err := tx.Exec(ctx, `
 		UPDATE vendors SET
 			name = COALESCE($2, name),
@@ -47,9 +52,10 @@ func (p *Procurement) UpdateVendor(
 			country = COALESCE($8, country),
 			terms = COALESCE($9, terms),
 			rating = COALESCE($10, rating),
-			status = COALESCE($11, status)
+			status = COALESCE($11, status),
+			party_id = COALESCE(party_id, $12::uuid)
 		WHERE id = $1`,
-		id, name, logo, category, contact, email, phone, country, terms, rating, status,
+		id, name, logo, category, contact, email, phone, country, terms, rating, status, newPartyID,
 	)
 	if err != nil {
 		return nil, err
@@ -70,16 +76,23 @@ func (p *Procurement) UpdateVendor(
 	}
 
 	var out models.Vendor
+	var partyID string
 	if err := tx.QueryRow(ctx, `
-		SELECT id, name, logo, category, contact, email, phone, country, terms, rating, status, total_spend, open_pos
+		SELECT id, name, logo, category, contact, email, phone, country, terms, rating, status, total_spend, open_pos, COALESCE(party_id::text,'')
 		FROM vendors WHERE id = $1`, id,
 	).Scan(
 		&out.ID, &out.Name, &out.Logo, &out.Category, &out.Contact, &out.Email, &out.Phone, &out.Country, &out.Terms,
-		&out.Rating, &out.Status, &out.TotalSpend, &out.OpenPOs,
+		&out.Rating, &out.Status, &out.TotalSpend, &out.OpenPOs, &partyID,
 	); err != nil {
 		return nil, err
 	}
 
+	if err := p.enqueueVendorUpsertedTx(ctx, tx, events.VendorUpsert{
+		PartyID: partyID, Code: out.ID, Name: out.Name, Category: out.Category,
+		Email: out.Email, Phone: out.Phone, Country: out.Country, Status: out.Status,
+	}); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -97,6 +110,12 @@ func (p *Procurement) DeleteVendor(ctx context.Context, id string, auditUser str
 	}
 	defer tx.Rollback(ctx)
 
+	// Capture the shared key + name before the row is gone so the mesh can be
+	// told to soft-deactivate this vendor (never a cross-service hard delete).
+	var partyID, vendorName string
+	_ = tx.QueryRow(ctx, `SELECT COALESCE(party_id::text,''), name FROM vendors WHERE id = $1`, id).
+		Scan(&partyID, &vendorName)
+
 	ct, err := tx.Exec(ctx, `DELETE FROM vendors WHERE id = $1`, id)
 	if err != nil {
 		return err
@@ -113,6 +132,12 @@ func (p *Procurement) DeleteVendor(ctx context.Context, id string, auditUser str
 		VALUES ($1,$2,$3,$4)`,
 		auditUser, "delete", id, "vendor deleted",
 	); err != nil {
+		return err
+	}
+
+	if err := p.enqueueVendorUpsertedTx(ctx, tx, events.VendorUpsert{
+		PartyID: partyID, Code: id, Name: vendorName, Status: "Inactive",
+	}); err != nil {
 		return err
 	}
 

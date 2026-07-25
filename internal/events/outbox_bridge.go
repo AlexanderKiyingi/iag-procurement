@@ -138,6 +138,63 @@ func BuildGrnPosted(grnID, poID, vendorID, receivedBy, receivedValue string, lin
 	return grnID, body, nil
 }
 
+// VendorUpsert carries the vendor master fields propagated across the
+// SCM ⇄ procurement ⇄ finance mesh. party_id is the canonical shared key.
+type VendorUpsert struct {
+	PartyID  string
+	Code     string
+	Name     string
+	Category string
+	Email    string
+	Phone    string
+	Country  string
+	Currency string
+	Status   string
+}
+
+// BuildVendorUpserted constructs the CloudEvents envelope for party.vendor.upserted
+// and returns the partition key (party_id) plus the marshaled payload. The repo
+// enqueues it in the vendor-write tx so the master change can never be lost to a
+// post-commit crash. Consumers upsert their local party master keyed on party_id
+// and MUST NOT re-emit (the mesh's loop-prevention rule).
+func BuildVendorUpserted(v VendorUpsert) (key string, payload []byte, err error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	status := v.Status
+	if status == "" {
+		status = "Active"
+	}
+	data := map[string]any{
+		"party_id":      v.PartyID,
+		"code":          v.Code,
+		"name":          v.Name,
+		"category":      v.Category,
+		"email":         v.Email,
+		"phone":         v.Phone,
+		"country":       v.Country,
+		"currency":      v.Currency,
+		"status":        status,
+		"supplier_type": "vendor",
+		"source":        Source,
+	}
+	evt := platformEvent{
+		ID:          uuid.NewString(),
+		Type:        TypeVendorUpserted,
+		Time:        now,
+		Source:      Source,
+		SpecVersion: SpecVersion,
+		Data:        data,
+	}
+	body, err := json.Marshal(evt)
+	if err != nil {
+		return "", nil, err
+	}
+	key = v.PartyID
+	if key == "" {
+		key = v.Code
+	}
+	return key, body, nil
+}
+
 // DispatchOutbox writes a persisted outbox row to Kafka. It implements
 // outbox.Dispatcher for the background publisher. A disabled publisher returns
 // nil (treated as delivered) so rows aren't retried forever in local/test runs.

@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"iag-procurement/backend/internal/events"
 	"iag-procurement/backend/internal/models"
 )
 
@@ -54,6 +56,9 @@ func (p *Procurement) CreateVendor(ctx context.Context, name, logo, category, co
 		status = "Active"
 	}
 	id := newProcurementID("V")
+	// Mint the shared party_id up front so the same canonical key is persisted
+	// locally and carried on the party.vendor.upserted event to the mesh.
+	partyID := uuid.NewString()
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -61,9 +66,9 @@ func (p *Procurement) CreateVendor(ctx context.Context, name, logo, category, co
 	defer tx.Rollback(ctx)
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO vendors (id, name, logo, category, contact, email, phone, country, terms, rating, status, total_spend, open_pos)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-		id, name, logo, category, contact, email, phone, country, terms, rating, status, 0, 0,
+		INSERT INTO vendors (id, name, logo, category, contact, email, phone, country, terms, rating, status, total_spend, open_pos, party_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::uuid)`,
+		id, name, logo, category, contact, email, phone, country, terms, rating, status, 0, 0, partyID,
 	); err != nil {
 		return nil, err
 	}
@@ -75,6 +80,12 @@ func (p *Procurement) CreateVendor(ctx context.Context, name, logo, category, co
 		VALUES ($1,$2,$3,$4)`,
 		auditUser, "create", id, fmt.Sprintf("vendor %s", name),
 	); err != nil {
+		return nil, err
+	}
+	if err := p.enqueueVendorUpsertedTx(ctx, tx, events.VendorUpsert{
+		PartyID: partyID, Code: id, Name: name, Category: category,
+		Email: email, Phone: phone, Country: country, Status: status,
+	}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
