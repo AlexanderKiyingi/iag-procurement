@@ -58,13 +58,6 @@ type Config struct {
 	KafkaFinanceGroup     string
 	KafkaVendorSyncGroup  string
 
-	// VendorSyncEnabled turns on the bidirectional vendor master mesh: procurement
-	// emits party.vendor.upserted on local vendor create/update/delete and ingests
-	// finance's party.vendor.upserted from iag.finance. Default false keeps the
-	// mesh inert until every peer service is deployed with sync on. Set via
-	// PROCUREMENT_VENDOR_SYNC_ENABLED.
-	VendorSyncEnabled bool
-
 	// FinancePaymentWritebackEnabled subscribes procurement to iag.finance and
 	// reflects finance.payment.made (AP) settlements back onto the originating
 	// invoice + PO. Default false keeps the consumer off until enabled via
@@ -188,7 +181,6 @@ func Load() (*Config, error) {
 
 		FleetFuelBridgeEnabled:         strings.EqualFold(os.Getenv("PROCUREMENT_FLEET_FUEL_BRIDGE_ENABLED"), "true"),
 		FinancePaymentWritebackEnabled: strings.EqualFold(os.Getenv("PROCUREMENT_FINANCE_PAYMENT_WRITEBACK_ENABLED"), "true"),
-		VendorSyncEnabled:              strings.EqualFold(os.Getenv("PROCUREMENT_VENDOR_SYNC_ENABLED"), "true"),
 
 		AuthMode:  authMode,
 		JWTIssuer: getenv("JWT_ISSUER", "http://localhost:3001"),

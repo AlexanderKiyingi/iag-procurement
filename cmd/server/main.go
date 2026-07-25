@@ -195,7 +195,6 @@ func main() {
 		// dropping events.
 		outboxStore := outbox.NewStore(pool)
 		procurementRepo.SetOutbox(outboxStore)
-		procurementRepo.SetVendorSync(cfg.VendorSyncEnabled)
 		go outbox.NewPublisher(outboxStore, publisher).Run(workerCtx)
 		log.Printf("event bus: outbox publisher started")
 	}
@@ -264,19 +263,19 @@ func main() {
 			log.Printf("event bus: consuming %s as group %s (finance payment writeback)", cfg.KafkaFinanceTopic, cfg.KafkaFinanceGroup)
 		}
 
-		if cfg.VendorSyncEnabled {
-			vendorSyncConsumer := consumer.NewVendorSync(consumer.Config{
-				Brokers: cfg.KafkaBrokers,
-				GroupID: cfg.KafkaVendorSyncGroup,
-				Topic:   cfg.KafkaFinanceTopic,
-			}, procurementRepo)
-			go func() {
-				if err := vendorSyncConsumer.Run(workerCtx); err != nil && workerCtx.Err() == nil {
-					log.Printf("vendor-sync consumer stopped: %v", err)
-				}
-			}()
-			log.Printf("event bus: consuming %s as group %s (vendor master sync)", cfg.KafkaFinanceTopic, cfg.KafkaVendorSyncGroup)
-		}
+		// Vendor master mesh: ingest finance's party.vendor.upserted. Always on
+		// whenever the event bus is up — no separate opt-in flag.
+		vendorSyncConsumer := consumer.NewVendorSync(consumer.Config{
+			Brokers: cfg.KafkaBrokers,
+			GroupID: cfg.KafkaVendorSyncGroup,
+			Topic:   cfg.KafkaFinanceTopic,
+		}, procurementRepo)
+		go func() {
+			if err := vendorSyncConsumer.Run(workerCtx); err != nil && workerCtx.Err() == nil {
+				log.Printf("vendor-sync consumer stopped: %v", err)
+			}
+		}()
+		log.Printf("event bus: consuming %s as group %s (vendor master sync)", cfg.KafkaFinanceTopic, cfg.KafkaVendorSyncGroup)
 	} else {
 		log.Printf("event bus: disabled (set EVENT_BUS_ENABLED=true and KAFKA_BROKERS)")
 	}

@@ -18,18 +18,14 @@ type Procurement struct {
 	pool              *pgxpool.Pool
 	outbox            *outbox.Store
 	approvalThreshold float64
-	vendorSyncEnabled bool
 }
 
 // SetOutbox wires the transactional outbox so requisition approval/rejection
 // events are enqueued atomically with the status change and drained to Kafka by
 // a background publisher. Nil leaves outbound events un-emitted (e.g. tests).
+// Wiring the outbox also activates the vendor master mesh emit path — there is
+// no separate opt-in flag; the mesh runs wherever the event bus is up.
 func (p *Procurement) SetOutbox(store *outbox.Store) { p.outbox = store }
-
-// SetVendorSync toggles emission of party.vendor.upserted on vendor
-// create/update/delete for the cross-service vendor master mesh. Off by default
-// so the mesh stays inert until every peer service is deployed with sync on.
-func (p *Procurement) SetVendorSync(enabled bool) { p.vendorSyncEnabled = enabled }
 
 // SetApprovalThreshold sets the PO total at/above which a purchase order is
 // created "Pending Approval" rather than auto-"Approved". 0 means every PO

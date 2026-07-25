@@ -12,9 +12,9 @@ import (
 // enqueueVendorUpsertedTx writes party.vendor.upserted into the outbox in the
 // same tx as the vendor mutation, so the master change and its cross-service
 // notification commit atomically (or not at all). No-op unless the outbox is
-// configured and vendor sync is enabled.
+// configured (i.e. the event bus is up).
 func (p *Procurement) enqueueVendorUpsertedTx(ctx context.Context, tx pgx.Tx, v events.VendorUpsert) error {
-	if p.outbox == nil || !p.vendorSyncEnabled {
+	if p.outbox == nil {
 		return nil
 	}
 	if strings.TrimSpace(v.PartyID) == "" {
