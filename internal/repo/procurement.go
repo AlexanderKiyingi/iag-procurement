@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/alvor-technologies/iag-platform-go/approvalchain"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"iag-procurement/backend/internal/models"
@@ -18,6 +20,11 @@ type Procurement struct {
 	pool              *pgxpool.Pool
 	outbox            *outbox.Store
 	approvalThreshold float64
+
+	// Desk chains are read from requisition_approval_desks and cached: the
+	// matrix is deployment configuration, not per-request data.
+	deskMu     sync.RWMutex
+	deskEngine *approvalchain.Engine
 }
 
 // SetOutbox wires the transactional outbox so requisition approval/rejection

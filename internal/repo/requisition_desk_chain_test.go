@@ -1,0 +1,333 @@
+package repo
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/alvor-technologies/iag-platform-go/approvalchain"
+)
+
+// The desk matrix ships as data in migration 020, so a typo in it is a
+// production routing bug that no compiler catches. These tests read the
+// migration itself and prove the matrix it installs is routable and escalates
+// where it claims to — the same job parity_test does for the chain definitions
+// in the ERP this model came from.
+
+const deskMigration = "020_requisition_desk_chain.sql"
+
+var deskRowRe = regexp.MustCompile(
+	`\('([a-z.]+)',\s*(\d+),\s*'([a-z_]+)',\s*'([^']*)',\s*\n?\s*ARRAY\[([^\]]*)\],\s*(\d+),\s*` +
+		`'([^']*)',\s*'([^']*)',\s*'([^']*)',\s*'([^']*)'\)`)
+
+func loadShippedChains(t *testing.T) []approvalchain.Chain {
+	t.Helper()
+	path := filepath.Join("..", "..", "migrations", deskMigration)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	matches := deskRowRe.FindAllStringSubmatch(string(raw), -1)
+	if len(matches) == 0 {
+		t.Fatalf("no desk rows parsed from %s — has the INSERT format changed?", deskMigration)
+	}
+
+	byChain := map[string][]approvalchain.Desk{}
+	var order []string
+	for _, m := range matches {
+		chainKey, desk, label := m[1], m[3], m[4]
+		minAmount, err := strconv.ParseFloat(m[6], 64)
+		if err != nil {
+			t.Fatalf("desk %s/%s: bad min_amount %q", chainKey, desk, m[6])
+		}
+		var patterns []string
+		for _, p := range strings.Split(m[5], ",") {
+			if p = strings.Trim(strings.TrimSpace(p), "'"); p != "" {
+				patterns = append(patterns, p)
+			}
+		}
+		if _, seen := byChain[chainKey]; !seen {
+			order = append(order, chainKey)
+		}
+		byChain[chainKey] = append(byChain[chainKey], approvalchain.Desk{
+			Key:          approvalchain.DeskKey(desk),
+			Label:        label,
+			RolePatterns: patterns,
+			MinAmount:    minAmount,
+			RequiredPerm: m[7],
+			ActionLabel:  m[8],
+			StatusLabel:  m[9],
+			ScopeBy:      m[10],
+		})
+	}
+
+	out := make([]approvalchain.Chain, 0, len(order))
+	for _, key := range order {
+		out = append(out, approvalchain.Chain{
+			Key:           key,
+			Label:         deskChainLabel(byChain[key]),
+			TerminalLabel: terminalLabel(byChain[key]),
+			Desks:         byChain[key],
+		})
+	}
+	return out
+}
+
+func shippedEngine(t *testing.T) *approvalchain.Engine {
+	t.Helper()
+	reg, err := approvalchain.NewRegistry(loadShippedChains(t)...)
+	if err != nil {
+		t.Fatalf("the shipped desk matrix does not form a valid registry: %v", err)
+	}
+	return approvalchain.NewEngine(reg)
+}
+
+func TestShippedMatrixDefinesTheExpectedChains(t *testing.T) {
+	eng := shippedEngine(t)
+	for _, key := range []string{ChainRequisition, ChainMaterialStores, ChainMaterialProcurement} {
+		if _, ok := eng.Registry().Get(key); !ok {
+			t.Errorf("migration %s does not define chain %q", deskMigration, key)
+		}
+	}
+}
+
+func TestShippedRequisitionChainEscalatesOnAmount(t *testing.T) {
+	eng := shippedEngine(t)
+	chain, _ := eng.Registry().Get(ChainRequisition)
+
+	cases := []struct {
+		name   string
+		amount float64
+		want   []approvalchain.DeskKey
+	}{
+		// Bands mirror migration 018: supervisor below 5M, manager to 20M,
+		// director above. Finance always pays.
+		{"below 5M", 4_999_999, []approvalchain.DeskKey{"pm", "accounts", "finance"}},
+		{"at 5M brings in GM", 5_000_000, []approvalchain.DeskKey{"pm", "accounts", "gm", "finance"}},
+		{"at 20M brings in CEO", 20_000_000, []approvalchain.DeskKey{"pm", "accounts", "gm", "ceo", "finance"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := chain.Engaged(approvalchain.Options{Amount: tc.amount})
+			if len(got) != len(tc.want) {
+				t.Fatalf("engaged %d desks, want %d", len(got), len(tc.want))
+			}
+			for i := range got {
+				if got[i].Key != tc.want[i] {
+					t.Fatalf("desk %d = %q, want %q", i, got[i].Key, tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestShippedMaterialChainsForkToDifferentTerminals(t *testing.T) {
+	eng := shippedEngine(t)
+
+	stores, _ := eng.Registry().Get(ChainMaterialStores)
+	if got := stores.Terminal(); got != "Issued" {
+		t.Errorf("stores path ends at %q, want Issued — no money moves on this path", got)
+	}
+	proc, _ := eng.Registry().Get(ChainMaterialProcurement)
+	if got := proc.Terminal(); got != "Follow-up Complete" {
+		t.Errorf("procurement path ends at %q, want Follow-up Complete", got)
+	}
+
+	// The stores path never touches GM or CEO regardless of value: issuing
+	// stock already owned is not a spending decision.
+	for _, d := range stores.Engaged(approvalchain.Options{Amount: 500_000_000}) {
+		if d.Key == "gm" || d.Key == "ceo" {
+			t.Errorf("stores path engaged %q; issuing owned stock should not escalate", d.Key)
+		}
+	}
+}
+
+func TestShippedRolePatternsMatchTheNamesPeopleActuallyUse(t *testing.T) {
+	eng := shippedEngine(t)
+	chain, _ := eng.Registry().Get(ChainRequisition)
+
+	cases := []struct {
+		desk approvalchain.DeskKey
+		role string
+	}{
+		{"pm", "Project Manager"}, {"pm", "PM"},
+		{"accounts", "Accounts Assistant"}, {"accounts", "Accountant"}, {"accounts", "accounts asst"},
+		{"gm", "General Manager"}, {"gm", "GM"}, {"gm", "Gen. Manager"},
+		{"ceo", "CEO"}, {"ceo", "Chief Executive Officer"},
+		{"finance", "Finance"}, {"finance", "Finance Officer"}, {"finance", "Treasurer"},
+	}
+	for _, tc := range cases {
+		d, ok := chain.Desk(tc.desk)
+		if !ok {
+			t.Fatalf("desk %q missing from the shipped matrix", tc.desk)
+		}
+		if !d.Matches(tc.role) {
+			t.Errorf("desk %q does not recognise role %q", tc.desk, tc.role)
+		}
+	}
+}
+
+func TestShippedMatrixKeepsDesksDistinct(t *testing.T) {
+	eng := shippedEngine(t)
+	chain, _ := eng.Registry().Get(ChainRequisition)
+
+	// A role that matched two desks would let one person clear both, quietly
+	// collapsing the chain. Finance and Accounts are the pair most at risk
+	// because "Accountant" reads as both.
+	for _, role := range []string{"Project Manager", "General Manager", "CEO", "Treasurer"} {
+		if got := chain.DesksForRole(role); len(got) != 1 {
+			t.Errorf("role %q holds %v; each of these should hold exactly one desk", role, got)
+		}
+	}
+}
+
+func TestShippedMatrixScopesThePMDeskToTheProjectOwner(t *testing.T) {
+	eng := shippedEngine(t)
+
+	for _, chainKey := range []string{ChainRequisition, ChainMaterialStores} {
+		chain, ok := eng.Registry().Get(chainKey)
+		if !ok {
+			t.Fatalf("chain %q missing", chainKey)
+		}
+		pm, ok := chain.Desk("pm")
+		if !ok {
+			t.Fatalf("chain %q has no pm desk", chainKey)
+		}
+		if pm.ScopeBy != "project_owner" {
+			t.Errorf("%s pm desk scopeBy = %q, want project_owner — any PM could otherwise clear any request",
+				chainKey, pm.ScopeBy)
+		}
+
+		owned := map[string]string{"project_owner": "alice@iag.local"}
+		alice := approvalchain.ActorWithRole("alice@iag.local", "Project Manager")
+		bob := approvalchain.ActorWithRole("bob@iag.local", "Project Manager")
+		if !pm.HoldsFor(alice, owned) {
+			t.Errorf("%s: the assigned PM should hold their own request", chainKey)
+		}
+		if pm.HoldsFor(bob, owned) {
+			t.Errorf("%s: a PM who does not own the project must not hold it", chainKey)
+		}
+		// No owner recorded: the desk stays role-wide rather than stranding it.
+		if !pm.HoldsFor(bob, nil) {
+			t.Errorf("%s: an unowned request must fall back to the role", chainKey)
+		}
+	}
+
+	// The senior desks approve on behalf of the company, not a project.
+	chain, _ := eng.Registry().Get(ChainRequisition)
+	for _, key := range []approvalchain.DeskKey{"gm", "ceo", "finance"} {
+		d, ok := chain.Desk(key)
+		if !ok {
+			t.Fatalf("desk %q missing", key)
+		}
+		if d.ScopeBy != "" {
+			t.Errorf("desk %q is scoped by %q; senior desks should stay role-wide", key, d.ScopeBy)
+		}
+	}
+}
+
+func TestShippedChainWalksEndToEnd(t *testing.T) {
+	eng := shippedEngine(t)
+	requester := approvalchain.ActorWithRole("req@iag.local", "Clerk")
+	s := approvalchain.New(ChainRequisition, requester.ID, approvalchain.Options{Amount: 25_000_000})
+
+	var err error
+	if s, err = eng.Submit(s, requester); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	for _, r := range []string{"Project Manager", "Accounts Assistant", "General Manager", "CEO", "Finance Officer"} {
+		if s, err = eng.Advance(s, approvalchain.ActorWithRole(r+"@iag.local", r), ""); err != nil {
+			t.Fatalf("advance as %s: %v", r, err)
+		}
+	}
+	if s.Status != approvalchain.StatusApproved {
+		t.Fatalf("status = %s, want approved", s.Status)
+	}
+
+	prog, err := eng.Progress(s)
+	if err != nil {
+		t.Fatalf("progress: %v", err)
+	}
+	if prog.StatusLabel != "Paid" {
+		t.Errorf("terminal label = %q, want Paid", prog.StatusLabel)
+	}
+}
+
+func TestShippedSkipDropsThePMDeskForNonProjectRequests(t *testing.T) {
+	eng := shippedEngine(t)
+	requester := approvalchain.ActorWithRole("req@iag.local", "Clerk")
+	// Fleet and general requests skip the PM desk — the same Skip option the
+	// handler passes through from the request body.
+	s := approvalchain.New(ChainRequisition, requester.ID, approvalchain.Options{
+		Amount: 1_000_000, Skip: []approvalchain.DeskKey{"pm"},
+	})
+
+	var err error
+	if s, err = eng.Submit(s, requester); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if s.Desk != "accounts" {
+		t.Fatalf("first desk = %q, want accounts", s.Desk)
+	}
+}
+
+func TestChainErrorsMapOntoRepoErrorVocabulary(t *testing.T) {
+	cases := []struct {
+		in   error
+		want error
+	}{
+		{approvalchain.ErrForbidden, ErrForbidden},
+		{approvalchain.ErrSelfApproval, ErrForbidden},
+		{approvalchain.ErrNotRequester, ErrForbidden},
+		{approvalchain.ErrReasonRequired, ErrInvalidArgument},
+		{approvalchain.ErrUnknownChain, ErrInvalidArgument},
+		{approvalchain.ErrNoEngagedDesks, ErrInvalidArgument},
+		{approvalchain.ErrNotWaiting, ErrConflict},
+		{approvalchain.ErrWrongDesk, ErrConflict},
+	}
+	for _, tc := range cases {
+		if got := mapChainErr(tc.in); !errors.Is(got, tc.want) {
+			t.Errorf("mapChainErr(%v) = %v, want it to wrap %v", tc.in, got, tc.want)
+		}
+	}
+	if mapChainErr(nil) != nil {
+		t.Error("mapChainErr(nil) should stay nil")
+	}
+}
+
+func TestMigrationSplitsIntoSingleStatements(t *testing.T) {
+	// The migrator splits on ";\n\n", so a statement not followed by a blank
+	// line silently merges with the next one and the whole migration fails at
+	// deploy time rather than here.
+	path := filepath.Join("..", "..", "migrations", deskMigration)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	sql := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	for i, chunk := range strings.Split(sql, ";\n\n") {
+		body := stripSQLComments(chunk)
+		if strings.TrimSpace(body) == "" {
+			continue
+		}
+		if n := strings.Count(body, ";"); n > 1 {
+			t.Errorf("chunk %d holds %d statements; each needs a blank line after its semicolon:\n%.120s", i, n+1, body)
+		}
+	}
+}
+
+func stripSQLComments(s string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "--") {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String()
+}

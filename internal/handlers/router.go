@@ -105,6 +105,12 @@ func (a *API) Mount(r *gin.Engine) {
 				data.GET("/requisitions", a.listRequisitions)
 				data.GET("/requisitions/approval-tiers", a.listApprovalTiers)
 				data.GET("/requisitions/by-origin", a.getRequisitionByOrigin)
+				// Desk-based approval, alongside the amount-band tiers above.
+				data.GET("/requisitions/approval-chains", a.listApprovalChains)
+				data.GET("/admin/approval-chains", a.listDeskMatrix)
+				data.GET("/requisitions/:id/desk", a.getRequisitionDeskProgress)
+				// The queue: what is waiting on the caller's own desks.
+				data.GET("/approvals/desk", a.approvalDesk)
 				data.GET("/rfqs", a.listRfqs)
 				data.GET("/rfqs/:id/quotes", a.listRfqQuotes)
 				data.GET("/purchase-orders", a.listPOs)
@@ -123,6 +129,22 @@ func (a *API) Mount(r *gin.Engine) {
 			mut.POST("/requisitions/:id/approve", middleware.RequirePermission(rbac.ChangeRequisition), a.approveRequisition)
 			mut.POST("/requisitions/:id/reject", middleware.RequirePermission(rbac.ChangeRequisition), a.rejectRequisition)
 			mut.DELETE("/requisitions/:id", middleware.RequirePermission(rbac.DeleteRequisition), a.deleteRequisition)
+			// Desk chain. change_requisition gates the route; which desk the
+			// caller may actually act on is decided by role inside the engine,
+			// so a Clerk with change_requisition still cannot sign for the GM.
+			mut.POST("/requisitions/:id/desk/open", middleware.RequirePermission(rbac.ChangeRequisition), a.openRequisitionDeskChain)
+			mut.POST("/requisitions/:id/desk/submit", middleware.RequirePermission(rbac.ChangeRequisition), a.submitRequisitionToDesk)
+			mut.POST("/requisitions/:id/desk/advance", middleware.RequirePermission(rbac.ChangeRequisition), a.advanceRequisitionDesk)
+			mut.POST("/requisitions/:id/desk/reject", middleware.RequirePermission(rbac.ChangeRequisition), a.rejectRequisitionDesk)
+			mut.POST("/requisitions/:id/desk/amend", middleware.RequirePermission(rbac.ChangeRequisition), a.amendRequisitionDesk)
+			mut.POST("/requisitions/:id/desk/cancel", middleware.RequirePermission(rbac.ChangeRequisition), a.cancelRequisitionDesk)
+			mut.POST("/requisitions/:id/desk/reopen", middleware.RequirePermission(rbac.ChangeRequisition), a.reopenRequisitionDesk)
+			// The desk matrix itself is configuration, not code: who holds each
+			// desk, the order, and the amount bands are edited here and take
+			// effect immediately — no redeploy.
+			mut.PUT("/admin/approval-chains/:chain", middleware.RequirePermission(rbac.ManageApprovalChains), a.putDeskChain)
+			mut.DELETE("/admin/approval-chains/:chain", middleware.RequirePermission(rbac.ManageApprovalChains), a.deleteDeskChain)
+			mut.POST("/admin/approval-chains/reload", middleware.RequirePermission(rbac.ManageApprovalChains), a.reloadDeskChains)
 			mut.POST("/purchase-orders", middleware.RequirePermission(rbac.AddPurchaseOrder), a.postPurchaseOrder)
 			mut.PATCH("/purchase-orders/:id", middleware.RequirePermission(rbac.ChangePurchaseOrder), a.patchPurchaseOrder)
 			mut.DELETE("/purchase-orders/:id", middleware.RequirePermission(rbac.DeletePurchaseOrder), a.deletePurchaseOrder)
