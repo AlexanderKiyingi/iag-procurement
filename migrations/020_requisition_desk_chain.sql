@@ -89,6 +89,15 @@ CREATE TABLE IF NOT EXISTS requisition_approval_desks (
     -- request": names a key in requisition_approval_state.scope. Empty leaves
     -- the desk role-global.
     scope_by TEXT NOT NULL DEFAULT '',
+    -- Segregation of duties for the chain this desk belongs to: one person may
+    -- sign at most once. A chain-level flag carried on the desk rows, so any
+    -- row setting it turns it on for the whole chain.
+    --
+    -- It exists because the tiered path in 018 already refuses an approver who
+    -- has signed any tier. Without it a requisition moved onto a desk chain
+    -- would lose that guarantee, and one person holding two roles could clear
+    -- two desks.
+    no_repeat_approver BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (chain_key, desk)
 );
 
@@ -102,56 +111,56 @@ CREATE INDEX IF NOT EXISTS requisition_approval_desks_order_idx
 -- Manager approves it" means. The senior desks stay role-wide — a GM approves
 -- on behalf of the company, not a project.
 INSERT INTO requisition_approval_desks
-    (chain_key, position, desk, label, role_patterns, min_amount, required_perm, action_label, status_label, scope_by)
+    (chain_key, position, desk, label, role_patterns, min_amount, required_perm, action_label, status_label, scope_by, no_repeat_approver)
 VALUES
     ('requisition', 1, 'pm', 'Project Manager',
-     ARRAY['project\s*manager', '\bpm\b'], 0, 'procurement.change_requisition', 'Approve', 'PM Approved', 'project_owner'),
+     ARRAY['project\s*manager', '\bpm\b'], 0, 'procurement.change_requisition', 'Approve', 'PM Approved', 'project_owner', TRUE),
     ('requisition', 2, 'accounts', 'Accounts Assistant',
      ARRAY['accounts?\s*assistant', 'accounts?\s*asst', '\baccountant\b', '\baa\b'], 0,
-     'procurement.approve_requisition_tier1', 'Approve', 'Accounts Assistant Approved', ''),
+     'procurement.approve_requisition_tier1', 'Approve', 'Accounts Assistant Approved', '', TRUE),
     ('requisition', 3, 'gm', 'General Manager',
      ARRAY['general\s*manager', '\bgm\b', 'gen\.?\s*manager'], 5000000,
-     'procurement.approve_requisition_tier2', 'Approve', 'GM Approved', ''),
+     'procurement.approve_requisition_tier2', 'Approve', 'GM Approved', '', TRUE),
     ('requisition', 4, 'ceo', 'CEO',
      ARRAY['\bceo\b', 'chief\s*executive'], 20000000,
-     'procurement.approve_requisition_tier3', 'Approve', 'CEO Approved', ''),
+     'procurement.approve_requisition_tier3', 'Approve', 'CEO Approved', '', TRUE),
     ('requisition', 5, 'finance', 'Finance',
      ARRAY['\bfinance\b', 'finance\s*(manager|officer|clerk)', 'cashier', 'treasurer'], 0,
-     'procurement.approve_requisition_tier1', 'Make payment', 'Paid', '')
+     'procurement.approve_requisition_tier1', 'Make payment', 'Paid', '', TRUE)
 ON CONFLICT (chain_key, desk) DO NOTHING;
 
 -- The material request chain forks at submit on stock availability. Stores path:
 -- the storekeeper issues from stock and no money moves, so it ends at Issued.
 INSERT INTO requisition_approval_desks
-    (chain_key, position, desk, label, role_patterns, min_amount, required_perm, action_label, status_label, scope_by)
+    (chain_key, position, desk, label, role_patterns, min_amount, required_perm, action_label, status_label, scope_by, no_repeat_approver)
 VALUES
     ('material.stores', 1, 'qs', 'Quantity Surveyor',
-     ARRAY['quantity\s*surveyor', '\bqs\b'], 0, 'procurement.change_requisition', 'Approve', 'QS Approved', ''),
+     ARRAY['quantity\s*surveyor', '\bqs\b'], 0, 'procurement.change_requisition', 'Approve', 'QS Approved', '', FALSE),
     ('material.stores', 2, 'pm', 'Project Manager',
-     ARRAY['project\s*manager', '\bpm\b'], 0, 'procurement.change_requisition', 'Approve', 'PM Approved', 'project_owner'),
+     ARRAY['project\s*manager', '\bpm\b'], 0, 'procurement.change_requisition', 'Approve', 'PM Approved', 'project_owner', FALSE),
     ('material.stores', 3, 'stores', 'Stores',
      ARRAY['stores?\s*(manager|keeper|officer)?', 'storekeeper', 'warehouse\s*manager'], 0,
-     'procurement.change_requisition', 'Issue materials', 'Issued', '')
+     'procurement.change_requisition', 'Issue materials', 'Issued', '', FALSE)
 ON CONFLICT (chain_key, desk) DO NOTHING;
 
 -- Procurement path: stock is short, so the request becomes a purchase and walks
 -- the money chain, ending with procurement closing the loop after payment.
 INSERT INTO requisition_approval_desks
-    (chain_key, position, desk, label, role_patterns, min_amount, required_perm, action_label, status_label, scope_by)
+    (chain_key, position, desk, label, role_patterns, min_amount, required_perm, action_label, status_label, scope_by, no_repeat_approver)
 VALUES
     ('material.procurement', 1, 'finance_review', 'Finance review',
      ARRAY['\bfinance\b', 'finance\s*(manager|officer)', '\baccountant\b'], 0,
-     'procurement.approve_requisition_tier1', 'Approve', 'Finance Reviewed', ''),
+     'procurement.approve_requisition_tier1', 'Approve', 'Finance Reviewed', '', TRUE),
     ('material.procurement', 2, 'gm', 'General Manager',
      ARRAY['general\s*manager', '\bgm\b', 'gen\.?\s*manager'], 5000000,
-     'procurement.approve_requisition_tier2', 'Approve', 'GM Approved', ''),
+     'procurement.approve_requisition_tier2', 'Approve', 'GM Approved', '', TRUE),
     ('material.procurement', 3, 'ceo', 'CEO',
      ARRAY['\bceo\b', 'chief\s*executive'], 20000000,
-     'procurement.approve_requisition_tier3', 'Approve', 'CEO Approved', ''),
+     'procurement.approve_requisition_tier3', 'Approve', 'CEO Approved', '', TRUE),
     ('material.procurement', 4, 'finance_pay', 'Finance payment',
      ARRAY['\bfinance\b', 'cashier', 'treasurer'], 0,
-     'procurement.approve_requisition_tier1', 'Make payment', 'Paid', ''),
+     'procurement.approve_requisition_tier1', 'Make payment', 'Paid', '', TRUE),
     ('material.procurement', 5, 'procurement_followup', 'Procurement follow-up',
      ARRAY['procurement', 'purchasing', 'buyer'], 0,
-     'procurement.change_requisition', 'Complete follow-up', 'Follow-up Complete', '')
+     'procurement.change_requisition', 'Complete follow-up', 'Follow-up Complete', '', TRUE)
 ON CONFLICT (chain_key, desk) DO NOTHING;

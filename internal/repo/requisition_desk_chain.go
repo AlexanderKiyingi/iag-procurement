@@ -62,7 +62,7 @@ func (p *Procurement) ReloadDeskChains(ctx context.Context) (*approvalchain.Engi
 func (p *Procurement) loadDeskChains(ctx context.Context) ([]approvalchain.Chain, error) {
 	rows, err := p.pool.Query(ctx, `
 		SELECT chain_key, desk, label, role_patterns, min_amount,
-		       required_perm, action_label, status_label, scope_by
+		       required_perm, action_label, status_label, scope_by, no_repeat_approver
 		FROM requisition_approval_desks
 		ORDER BY chain_key, position`)
 	if err != nil {
@@ -71,6 +71,7 @@ func (p *Procurement) loadDeskChains(ctx context.Context) ([]approvalchain.Chain
 	defer rows.Close()
 
 	byChain := make(map[string][]approvalchain.Desk)
+	noRepeatByChain := make(map[string]bool)
 	var order []string
 	for rows.Next() {
 		var (
@@ -79,13 +80,18 @@ func (p *Procurement) loadDeskChains(ctx context.Context) ([]approvalchain.Chain
 			minAmount                  float64
 			perm, actionLbl, statusLbl string
 			scopeBy                    string
+			noRepeat                   bool
 		)
 		if err := rows.Scan(&chainKey, &desk, &label, &patterns, &minAmount,
-			&perm, &actionLbl, &statusLbl, &scopeBy); err != nil {
+			&perm, &actionLbl, &statusLbl, &scopeBy, &noRepeat); err != nil {
 			return nil, err
 		}
 		if _, seen := byChain[chainKey]; !seen {
 			order = append(order, chainKey)
+		}
+		// Chain-level flag carried on desk rows: any row setting it turns it on.
+		if noRepeat {
+			noRepeatByChain[chainKey] = true
 		}
 		byChain[chainKey] = append(byChain[chainKey], approvalchain.Desk{
 			Key:          approvalchain.DeskKey(desk),
@@ -105,10 +111,11 @@ func (p *Procurement) loadDeskChains(ctx context.Context) ([]approvalchain.Chain
 	out := make([]approvalchain.Chain, 0, len(order))
 	for _, key := range order {
 		out = append(out, approvalchain.Chain{
-			Key:           key,
-			Label:         deskChainLabel(byChain[key]),
-			TerminalLabel: terminalLabel(byChain[key]),
-			Desks:         byChain[key],
+			Key:              key,
+			Label:            deskChainLabel(byChain[key]),
+			TerminalLabel:    terminalLabel(byChain[key]),
+			Desks:            byChain[key],
+			NoRepeatApprover: noRepeatByChain[key],
 		})
 	}
 	return out, nil
@@ -145,13 +152,15 @@ type DeskRow struct {
 	ActionLabel  string   `json:"actionLabel"`
 	StatusLabel  string   `json:"statusLabel"`
 	ScopeBy      string   `json:"scopeBy,omitempty"`
+	// NoRepeatApprover is a chain-level flag stored on every row of the chain.
+	NoRepeatApprover bool `json:"noRepeatApprover,omitempty"`
 }
 
 // ListDeskMatrix returns the desk matrix as editable rows.
 func (p *Procurement) ListDeskMatrix(ctx context.Context) ([]DeskRow, error) {
 	rows, err := p.pool.Query(ctx, `
 		SELECT chain_key, position, desk, label, role_patterns, min_amount,
-		       required_perm, action_label, status_label, scope_by
+		       required_perm, action_label, status_label, scope_by, no_repeat_approver
 		FROM requisition_approval_desks ORDER BY chain_key, position`)
 	if err != nil {
 		return nil, err
@@ -161,7 +170,8 @@ func (p *Procurement) ListDeskMatrix(ctx context.Context) ([]DeskRow, error) {
 	for rows.Next() {
 		var r DeskRow
 		if err := rows.Scan(&r.ChainKey, &r.Position, &r.Desk, &r.Label, &r.RolePatterns,
-			&r.MinAmount, &r.RequiredPerm, &r.ActionLabel, &r.StatusLabel, &r.ScopeBy); err != nil {
+			&r.MinAmount, &r.RequiredPerm, &r.ActionLabel, &r.StatusLabel,
+			&r.ScopeBy, &r.NoRepeatApprover); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -201,10 +211,11 @@ func (p *Procurement) ReplaceDeskChain(ctx context.Context, chainKey string, des
 		})
 	}
 	if _, err := approvalchain.NewRegistry(approvalchain.Chain{
-		Key:           chainKey,
-		Label:         deskChainLabel(candidate),
-		TerminalLabel: terminalLabel(candidate),
-		Desks:         candidate,
+		Key:              chainKey,
+		Label:            deskChainLabel(candidate),
+		TerminalLabel:    terminalLabel(candidate),
+		Desks:            candidate,
+		NoRepeatApprover: desks[0].NoRepeatApprover,
 	}); err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidArgument, err.Error())
 	}
@@ -238,10 +249,11 @@ func (p *Procurement) ReplaceDeskChain(ctx context.Context, chainKey string, des
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO requisition_approval_desks
 				(chain_key, position, desk, label, role_patterns, min_amount,
-				 required_perm, action_label, status_label, scope_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+				 required_perm, action_label, status_label, scope_by, no_repeat_approver)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 			chainKey, i+1, strings.TrimSpace(d.Desk), d.Label, d.RolePatterns,
-			d.MinAmount, d.RequiredPerm, d.ActionLabel, d.StatusLabel, d.ScopeBy); err != nil {
+			d.MinAmount, d.RequiredPerm, d.ActionLabel, d.StatusLabel,
+			d.ScopeBy, d.NoRepeatApprover); err != nil {
 			return nil, err
 		}
 	}

@@ -22,7 +22,7 @@ const deskMigration = "020_requisition_desk_chain.sql"
 
 var deskRowRe = regexp.MustCompile(
 	`\('([a-z.]+)',\s*(\d+),\s*'([a-z_]+)',\s*'([^']*)',\s*\n?\s*ARRAY\[([^\]]*)\],\s*(\d+),\s*` +
-		`'([^']*)',\s*'([^']*)',\s*'([^']*)',\s*'([^']*)'\)`)
+		`'([^']*)',\s*'([^']*)',\s*'([^']*)',\s*'([^']*)',\s*(TRUE|FALSE)\)`)
 
 func loadShippedChains(t *testing.T) []approvalchain.Chain {
 	t.Helper()
@@ -37,6 +37,7 @@ func loadShippedChains(t *testing.T) []approvalchain.Chain {
 	}
 
 	byChain := map[string][]approvalchain.Desk{}
+	noRepeat := map[string]bool{}
 	var order []string
 	for _, m := range matches {
 		chainKey, desk, label := m[1], m[3], m[4]
@@ -63,15 +64,19 @@ func loadShippedChains(t *testing.T) []approvalchain.Chain {
 			StatusLabel:  m[9],
 			ScopeBy:      m[10],
 		})
+		if m[11] == "TRUE" {
+			noRepeat[chainKey] = true
+		}
 	}
 
 	out := make([]approvalchain.Chain, 0, len(order))
 	for _, key := range order {
 		out = append(out, approvalchain.Chain{
-			Key:           key,
-			Label:         deskChainLabel(byChain[key]),
-			TerminalLabel: terminalLabel(byChain[key]),
-			Desks:         byChain[key],
+			Key:              key,
+			Label:            deskChainLabel(byChain[key]),
+			TerminalLabel:    terminalLabel(byChain[key]),
+			Desks:            byChain[key],
+			NoRepeatApprover: noRepeat[key],
 		})
 	}
 	return out
@@ -227,6 +232,45 @@ func TestShippedMatrixScopesThePMDeskToTheProjectOwner(t *testing.T) {
 		if d.ScopeBy != "" {
 			t.Errorf("desk %q is scoped by %q; senior desks should stay role-wide", key, d.ScopeBy)
 		}
+	}
+}
+
+// The tiered path in migration 018 refuses an approver who has already signed
+// any tier on a requisition. A requisition routed through desks instead must
+// not lose that guarantee — otherwise one person holding two roles could clear
+// two desks, and moving between mechanisms would quietly weaken the control.
+func TestShippedSpendingChainsRefuseARepeatApprover(t *testing.T) {
+	eng := shippedEngine(t)
+
+	for _, key := range []string{ChainRequisition, ChainMaterialProcurement} {
+		chain, ok := eng.Registry().Get(key)
+		if !ok {
+			t.Fatalf("chain %q missing", key)
+		}
+		if !chain.NoRepeatApprover {
+			t.Errorf("chain %q allows one person to sign twice; the tiered path it replaces does not", key)
+		}
+	}
+
+	// Walk it: one person holding both the PM and Accounts roles clears the
+	// first desk and is then refused the second.
+	both := approvalchain.Actor{
+		ID:    "alice@iag.local",
+		Roles: []string{"Project Manager", "Accounts Assistant"},
+	}
+	s := approvalchain.New(ChainRequisition, "requester@iag.local", approvalchain.Options{
+		Amount: 1_000_000,
+		Scope:  map[string]string{"project_owner": both.ID},
+	})
+	s, err := eng.Submit(s, approvalchain.ActorWithRole("requester@iag.local", "Clerk"))
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if s, err = eng.Advance(s, both, ""); err != nil {
+		t.Fatalf("pm desk: %v", err)
+	}
+	if _, err := eng.Advance(s, both, ""); !errors.Is(err, approvalchain.ErrRepeatApprover) {
+		t.Fatalf("same person on a second desk: %v, want ErrRepeatApprover", err)
 	}
 }
 
