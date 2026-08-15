@@ -20,6 +20,56 @@ import (
 
 const deskMigration = "020_requisition_desk_chain.sql"
 
+// 020 seeds the matrix and cannot be edited once deployed, so a later migration
+// corrects the two money desks that claimed to pay. The tests load the effective
+// shipped configuration — the seed with that correction applied — because that
+// is what a running database holds.
+const deskLabelMigration = "021_requisition_terminal_is_authorization.sql"
+
+var (
+	deskLabelSetRe = regexp.MustCompile(
+		`SET action_label = '([^']*)',\s*\n?\s*status_label = '([^']*)'`)
+	deskLabelPairRe = regexp.MustCompile(`\('([a-z.]+)',\s*'([a-z_]+)'\)`)
+)
+
+// applyShippedLabelUpdates rewrites the labels 021 corrects. It fails loudly
+// rather than silently skipping: a matrix test that quietly stops reflecting the
+// migrations is worse than no test.
+func applyShippedLabelUpdates(t *testing.T, byChain map[string][]approvalchain.Desk) {
+	t.Helper()
+	path := filepath.Join("..", "..", "migrations", deskLabelMigration)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	set := deskLabelSetRe.FindStringSubmatch(string(raw))
+	if set == nil {
+		t.Fatalf("no label UPDATE parsed from %s — has the statement changed?", deskLabelMigration)
+	}
+	pairs := deskLabelPairRe.FindAllStringSubmatch(string(raw), -1)
+	if len(pairs) == 0 {
+		t.Fatalf("no (chain, desk) targets parsed from %s", deskLabelMigration)
+	}
+	for _, p := range pairs {
+		chainKey, deskKey := p[1], p[2]
+		desks, ok := byChain[chainKey]
+		if !ok {
+			t.Fatalf("%s targets chain %q, which %s does not define", deskLabelMigration, chainKey, deskMigration)
+		}
+		found := false
+		for i := range desks {
+			if string(desks[i].Key) == deskKey {
+				desks[i].ActionLabel, desks[i].StatusLabel = set[1], set[2]
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s targets desk %s/%s, which %s does not define",
+				deskLabelMigration, chainKey, deskKey, deskMigration)
+		}
+	}
+}
+
 var deskRowRe = regexp.MustCompile(
 	`\('([a-z.]+)',\s*(\d+),\s*'([a-z_]+)',\s*'([^']*)',\s*\n?\s*ARRAY\[([^\]]*)\],\s*(\d+),\s*` +
 		`'([^']*)',\s*'([^']*)',\s*'([^']*)',\s*'([^']*)',\s*(TRUE|FALSE)\)`)
@@ -69,6 +119,8 @@ func loadShippedChains(t *testing.T) []approvalchain.Chain {
 		}
 	}
 
+	applyShippedLabelUpdates(t, byChain)
+
 	out := make([]approvalchain.Chain, 0, len(order))
 	for _, key := range order {
 		out = append(out, approvalchain.Chain{
@@ -110,7 +162,8 @@ func TestShippedRequisitionChainEscalatesOnAmount(t *testing.T) {
 		want   []approvalchain.DeskKey
 	}{
 		// Bands mirror migration 018: supervisor below 5M, manager to 20M,
-		// director above. Finance always pays.
+		// director above. Finance is engaged at every value — authorizing the
+		// payment is not a banded decision.
 		{"below 5M", 4_999_999, []approvalchain.DeskKey{"pm", "accounts", "finance"}},
 		{"at 5M brings in GM", 5_000_000, []approvalchain.DeskKey{"pm", "accounts", "gm", "finance"}},
 		{"at 20M brings in CEO", 20_000_000, []approvalchain.DeskKey{"pm", "accounts", "gm", "ceo", "finance"}},
@@ -296,8 +349,11 @@ func TestShippedChainWalksEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("progress: %v", err)
 	}
-	if prog.StatusLabel != "Paid" {
-		t.Errorf("terminal label = %q, want Paid", prog.StatusLabel)
+	// The desk authorizes payment; it does not make one. No payment record is
+	// written and no cash moves, so a terminal reading "Paid" was an assertion
+	// the chain could not support.
+	if prog.StatusLabel != "Payment Authorized" {
+		t.Errorf("terminal label = %q, want Payment Authorized", prog.StatusLabel)
 	}
 }
 
