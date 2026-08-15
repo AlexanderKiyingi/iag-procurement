@@ -121,24 +121,27 @@ func TestDeskChainWalksAndCommitsSideEffects(t *testing.T) {
 		t.Fatalf("first desk = %q, want pm", s.Desk)
 	}
 
-	for _, role := range []string{"Project Manager", "Accounts Assistant", "General Manager", "CEO"} {
+	// Migration 022 removed the money desk: the chain ends when the commitment
+	// is authorized, and disbursement is authorized in finance against a matched
+	// invoice. CEO is the last desk at this amount.
+	for _, role := range []string{"Project Manager", "Accounts Assistant", "General Manager"} {
 		s = advance(t, p, ctx, reqID, deskActorFor(role))
 		if s.Status != approvalchain.StatusInFlight {
 			t.Fatalf("chain closed early after %s", role)
 		}
 	}
-	s = advance(t, p, ctx, reqID, deskActorFor("Finance Officer"))
+	s = advance(t, p, ctx, reqID, deskActorFor("CEO"))
 	if s.Status != approvalchain.StatusApproved {
 		t.Fatalf("status = %s, want approved", s.Status)
 	}
 
-	// History survived the round trip in order: submit + five advances.
+	// History survived the round trip in order: submit + four advances.
 	reloaded, err := p.LoadDeskState(ctx, reqID)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if len(reloaded.History) != 6 {
-		t.Fatalf("history has %d steps after reload, want 6", len(reloaded.History))
+	if len(reloaded.History) != 5 {
+		t.Fatalf("history has %d steps after reload, want 5", len(reloaded.History))
 	}
 	if reloaded.History[0].Action != approvalchain.ActionSubmit {
 		t.Fatalf("first step = %q, want submit", reloaded.History[0].Action)

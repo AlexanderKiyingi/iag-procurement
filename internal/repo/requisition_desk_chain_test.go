@@ -119,19 +119,78 @@ func loadShippedChains(t *testing.T) []approvalchain.Chain {
 		}
 	}
 
+	// Later migrations edit the seed in place, so they are replayed in order.
+	// The tests then describe the configuration a running database actually
+	// holds rather than the first migration that touched it.
 	applyShippedLabelUpdates(t, byChain)
+	terminals := applyShippedDeskRemovals(t, byChain)
 
 	out := make([]approvalchain.Chain, 0, len(order))
 	for _, key := range order {
 		out = append(out, approvalchain.Chain{
 			Key:              key,
-			Label:            deskChainLabel(byChain[key]),
-			TerminalLabel:    terminalLabel(byChain[key]),
+			Label:            deskChainLabel(byChain[key], terminals[key]),
+			TerminalLabel:    chainTerminal(byChain[key], terminals[key]),
 			Desks:            byChain[key],
 			NoRepeatApprover: noRepeat[key],
 		})
 	}
 	return out
+}
+
+const deskRemovalMigration = "022_commitment_chain_ends_at_commitment.sql"
+
+var (
+	deskDeleteRe   = regexp.MustCompile(`(?s)DELETE FROM requisition_approval_desks\s+WHERE \(chain_key, desk\) IN \((.*?)\);`)
+	deskTerminalRe = regexp.MustCompile(`SET terminal_label = '([^']*)'\s*\n?\s*WHERE chain_key = '([a-z.]+)'`)
+)
+
+// applyShippedDeskRemovals replays 022: the money desks it drops, and the
+// chain-level terminals it sets. Returns the terminal per chain.
+func applyShippedDeskRemovals(t *testing.T, byChain map[string][]approvalchain.Desk) map[string]string {
+	t.Helper()
+	path := filepath.Join("..", "..", "migrations", deskRemovalMigration)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	src := string(raw)
+
+	del := deskDeleteRe.FindStringSubmatch(src)
+	if del == nil {
+		t.Fatalf("no desk DELETE parsed from %s — has the statement changed?", deskRemovalMigration)
+	}
+	for _, p := range deskLabelPairRe.FindAllStringSubmatch(del[1], -1) {
+		chainKey, deskKey := p[1], p[2]
+		desks, ok := byChain[chainKey]
+		if !ok {
+			t.Fatalf("%s deletes from chain %q, which %s does not define",
+				deskRemovalMigration, chainKey, deskMigration)
+		}
+		kept := desks[:0]
+		removed := false
+		for _, d := range desks {
+			if string(d.Key) == deskKey {
+				removed = true
+				continue
+			}
+			kept = append(kept, d)
+		}
+		if !removed {
+			t.Fatalf("%s deletes desk %s/%s, which is not in the seed",
+				deskRemovalMigration, chainKey, deskKey)
+		}
+		byChain[chainKey] = kept
+	}
+
+	terminals := map[string]string{}
+	for _, m := range deskTerminalRe.FindAllStringSubmatch(src, -1) {
+		terminals[m[2]] = m[1]
+	}
+	if len(terminals) == 0 {
+		t.Fatalf("no terminal_label UPDATE parsed from %s", deskRemovalMigration)
+	}
+	return terminals
 }
 
 func shippedEngine(t *testing.T) *approvalchain.Engine {
@@ -162,11 +221,11 @@ func TestShippedRequisitionChainEscalatesOnAmount(t *testing.T) {
 		want   []approvalchain.DeskKey
 	}{
 		// Bands mirror migration 018: supervisor below 5M, manager to 20M,
-		// director above. Finance is engaged at every value — authorizing the
-		// payment is not a banded decision.
-		{"below 5M", 4_999_999, []approvalchain.DeskKey{"pm", "accounts", "finance"}},
-		{"at 5M brings in GM", 5_000_000, []approvalchain.DeskKey{"pm", "accounts", "gm", "finance"}},
-		{"at 20M brings in CEO", 20_000_000, []approvalchain.DeskKey{"pm", "accounts", "gm", "ceo", "finance"}},
+		// director above. The chain ends at the commitment — disbursement is
+		// authorized in finance, against a matched invoice (migration 022).
+		{"below 5M", 4_999_999, []approvalchain.DeskKey{"pm", "accounts"}},
+		{"at 5M brings in GM", 5_000_000, []approvalchain.DeskKey{"pm", "accounts", "gm"}},
+		{"at 20M brings in CEO", 20_000_000, []approvalchain.DeskKey{"pm", "accounts", "gm", "ceo"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -216,7 +275,6 @@ func TestShippedRolePatternsMatchTheNamesPeopleActuallyUse(t *testing.T) {
 		{"accounts", "Accounts Assistant"}, {"accounts", "Accountant"}, {"accounts", "accounts asst"},
 		{"gm", "General Manager"}, {"gm", "GM"}, {"gm", "Gen. Manager"},
 		{"ceo", "CEO"}, {"ceo", "Chief Executive Officer"},
-		{"finance", "Finance"}, {"finance", "Finance Officer"}, {"finance", "Treasurer"},
 	}
 	for _, tc := range cases {
 		d, ok := chain.Desk(tc.desk)
@@ -234,9 +292,8 @@ func TestShippedMatrixKeepsDesksDistinct(t *testing.T) {
 	chain, _ := eng.Registry().Get(ChainRequisition)
 
 	// A role that matched two desks would let one person clear both, quietly
-	// collapsing the chain. Finance and Accounts are the pair most at risk
-	// because "Accountant" reads as both.
-	for _, role := range []string{"Project Manager", "General Manager", "CEO", "Treasurer"} {
+	// collapsing the chain.
+	for _, role := range []string{"Project Manager", "General Manager", "CEO", "Accounts Assistant"} {
 		if got := chain.DesksForRole(role); len(got) != 1 {
 			t.Errorf("role %q holds %v; each of these should hold exactly one desk", role, got)
 		}
@@ -277,7 +334,7 @@ func TestShippedMatrixScopesThePMDeskToTheProjectOwner(t *testing.T) {
 
 	// The senior desks approve on behalf of the company, not a project.
 	chain, _ := eng.Registry().Get(ChainRequisition)
-	for _, key := range []approvalchain.DeskKey{"gm", "ceo", "finance"} {
+	for _, key := range []approvalchain.DeskKey{"gm", "ceo"} {
 		d, ok := chain.Desk(key)
 		if !ok {
 			t.Fatalf("desk %q missing", key)
@@ -336,7 +393,7 @@ func TestShippedChainWalksEndToEnd(t *testing.T) {
 	if s, err = eng.Submit(s, requester); err != nil {
 		t.Fatalf("submit: %v", err)
 	}
-	for _, r := range []string{"Project Manager", "Accounts Assistant", "General Manager", "CEO", "Finance Officer"} {
+	for _, r := range []string{"Project Manager", "Accounts Assistant", "General Manager", "CEO"} {
 		if s, err = eng.Advance(s, approvalchain.ActorWithRole(r+"@iag.local", r), ""); err != nil {
 			t.Fatalf("advance as %s: %v", r, err)
 		}
@@ -349,11 +406,11 @@ func TestShippedChainWalksEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("progress: %v", err)
 	}
-	// The desk authorizes payment; it does not make one. No payment record is
-	// written and no cash moves, so a terminal reading "Paid" was an assertion
-	// the chain could not support.
-	if prog.StatusLabel != "Payment Authorized" {
-		t.Errorf("terminal label = %q, want Payment Authorized", prog.StatusLabel)
+	// One outcome, one string. The last desk to sign varies with the amount, so
+	// deriving the terminal would make the same state read three different ways
+	// — who signed is in the step history, not in this label.
+	if prog.StatusLabel != "Approved for Procurement" {
+		t.Errorf("terminal label = %q, want Approved for Procurement", prog.StatusLabel)
 	}
 }
 
