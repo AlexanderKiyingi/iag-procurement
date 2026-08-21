@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 
 	"iag-procurement/backend/internal/events"
 	"iag-procurement/backend/internal/notifyclient"
@@ -131,21 +132,38 @@ func (s *Service) EnqueueAlertEmail(ctx context.Context, p AlertJobPayload) erro
 		"Title": p.Title,
 		"Body":  body,
 	}
+
+	// Dispatch every recipient concurrently.
+	//
+	// This ran as a serial loop, each iteration a blocking HTTP POST with a
+	// ten-second client timeout, on the request path of the Approve button. A
+	// desk with five holders and a slow notifications service meant a spinner
+	// measured in tens of seconds on the most-used interaction in the product.
+	//
+	// Failures stay warnings: the in-app row is already written and is the
+	// source of truth for the operator-facing alert, and the outcome event went
+	// to the transactional outbox before this was ever called. A lost email
+	// delays a nudge, never an approval.
+	var wg sync.WaitGroup
 	for _, to := range p.To {
-		_, err := s.notify.Dispatch(ctx, notifyclient.DispatchRequest{
-			Channel:    "email",
-			Recipient:  to,
-			TemplateID: "procurement.alert",
-			Variables:  variables,
-			EventID:    eventID,
-		})
-		if err != nil {
-			slog.WarnContext(ctx, "procurement.alert dispatch failed",
-				"recipient", to,
-				"eventId", eventID,
-				"err", err,
-			)
-		}
+		wg.Add(1)
+		go func(to string) {
+			defer wg.Done()
+			if _, err := s.notify.Dispatch(ctx, notifyclient.DispatchRequest{
+				Channel:    "email",
+				Recipient:  to,
+				TemplateID: "procurement.alert",
+				Variables:  variables,
+				EventID:    eventID,
+			}); err != nil {
+				slog.WarnContext(ctx, "procurement.alert dispatch failed",
+					"recipient", to,
+					"eventId", eventID,
+					"err", err,
+				)
+			}
+		}(to)
 	}
+	wg.Wait()
 	return nil
 }

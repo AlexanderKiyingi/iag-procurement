@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/alvor-technologies/iag-platform-go/approvalchain"
 	"github.com/gin-gonic/gin"
@@ -289,9 +291,39 @@ func (a *API) applyDeskTransition(c *gin.Context, fn deskTransitionFn) {
 	if mapProcurementErr(c, err) {
 		return
 	}
-	a.notifyDeskTransition(c, id, progress)
+	a.notifyDeskTransitionAsync(c, id, progress)
 	c.JSON(http.StatusOK, progress)
 }
+
+// notifyDeskTransitionAsync runs the desk notification without holding the
+// response.
+//
+// The context is deliberately detached from the request. Gin cancels
+// c.Request.Context() as soon as the response is written, so handing it to a
+// goroutine would cancel the dispatch the instant it became useful — the
+// approval would land, the response would return, and the notification would
+// silently never go out. That failure looks exactly like "approvals sit for a
+// week", which is the problem desk chains exist to solve, so it is worth the
+// explicit WithoutCancel rather than a background context: the trace and
+// request-id baggage survive, the cancellation does not.
+//
+// The timeout is its own, generous compared to the request but bounded, so a
+// hung notifications service leaks one goroutine for at most that long instead
+// of forever.
+func (a *API) notifyDeskTransitionAsync(c *gin.Context, requisitionID string, st *repo.DeskState) {
+	if a.notify == nil || st == nil {
+		return
+	}
+	ctx := context.WithoutCancel(c.Request.Context())
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, deskNotifyTimeout)
+		defer cancel()
+		a.notifyDeskTransition(ctx, requisitionID, st)
+	}()
+}
+
+// deskNotifyTimeout bounds the detached dispatch above.
+const deskNotifyTimeout = 30 * time.Second
 
 // notifyDeskTransition tells whoever the request now waits on that it is theirs.
 //
@@ -303,11 +335,15 @@ func (a *API) applyDeskTransition(c *gin.Context, fn deskTransitionFn) {
 // This is best-effort and deliberately after the commit: the queue is the
 // durable source of truth, so a lost email delays a nudge, never an approval.
 // A failed dispatch must not roll back an approval that already happened.
-func (a *API) notifyDeskTransition(c *gin.Context, requisitionID string, st *repo.DeskState) {
+//
+// It is also deliberately off the response path — see notifyDeskTransitionAsync,
+// which is what callers use. Running it inline made the approver wait for a
+// desk lookup plus an outbound HTTP call per recipient before their click
+// returned.
+func (a *API) notifyDeskTransition(ctx context.Context, requisitionID string, st *repo.DeskState) {
 	if a.notify == nil || st == nil {
 		return
 	}
-	ctx := c.Request.Context()
 	title, message, to := "", "", []string(nil)
 
 	switch st.State.Status {

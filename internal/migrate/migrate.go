@@ -120,6 +120,7 @@ func migrationFiles() []string {
 		"021_requisition_terminal_is_authorization.sql",
 		"022_commitment_chain_ends_at_commitment.sql",
 		"023_item_stockable.sql",
+		"024_search_trigram_indexes.sql",
 	}
 }
 
