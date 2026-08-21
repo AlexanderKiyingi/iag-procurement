@@ -168,7 +168,15 @@ func (a *API) emitRequisitionStatusChange(c *gin.Context, row *models.Requisitio
 	if outcome != "approved" && outcome != "rejected" {
 		return
 	}
-	body, _ := json.Marshal(map[string]string{"id": row.ID, "title": row.Title, "status": outcome})
+	// Requester travels with the signal so the handler can address the decision
+	// to the person who raised the requisition; procurement treats Requester as
+	// an email address (the desk chain already sends to it directly).
+	body, _ := json.Marshal(map[string]string{
+		"id":        row.ID,
+		"title":     row.Title,
+		"status":    outcome,
+		"requester": row.Requester,
+	})
 	_ = a.bus.Emit(c.Request.Context(), signals.Event{Name: events.RequisitionDecided, Payload: body})
 }
 

@@ -44,6 +44,7 @@ func (s *Service) MarkRead(ctx context.Context, id int64) error {
 func (s *Service) Register(bus *signals.Bus) {
 	bus.On(events.ProcurementAlert, s.onProcurementAlert)
 	bus.On(events.RequisitionPending, s.onRequisitionPending)
+	bus.On(events.RequisitionDecided, s.onRequisitionDecided)
 }
 
 func (s *Service) onProcurementAlert(ctx context.Context, e signals.Event) error {
@@ -66,6 +67,44 @@ func (s *Service) onRequisitionPending(ctx context.Context, e signals.Event) err
 	body := fmt.Sprintf("%s (%s) needs approval.", p.Title, p.ID)
 	_, err := s.store.InsertInApp(ctx, events.RequisitionPending, title, body, "warning")
 	return err
+}
+
+// onRequisitionDecided tells the requester the outcome of the tiered
+// (amount-band) approval path. That path emitted requisition.decided with no
+// subscriber, so Bus.Emit ran zero handlers and returned nil: an approval or
+// rejection reached the requester through no channel at all, and nothing
+// logged it. The desk-chain path has always notified on the same transitions
+// (see requisition_desk_chain.go); this brings the two into line.
+func (s *Service) onRequisitionDecided(ctx context.Context, e signals.Event) error {
+	var p struct {
+		ID        string `json:"id"`
+		Title     string `json:"title"`
+		Status    string `json:"status"`
+		Requester string `json:"requester"`
+	}
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return fmt.Errorf("requisition.decided payload: %w", err)
+	}
+	if p.Requester == "" {
+		// No addressable requester: still record the in-app row so the decision
+		// is visible in procurement's own UI rather than lost entirely.
+		title := "Requisition " + p.Status
+		_, err := s.store.InsertInApp(ctx, events.RequisitionDecided, title,
+			fmt.Sprintf("%s (%s) was %s.", p.Title, p.ID, p.Status), severityForOutcome(p.Status))
+		return err
+	}
+	return s.EnqueueAlertEmail(ctx, AlertJobPayload{
+		To:      []string{p.Requester},
+		Title:   "Requisition " + p.Status + ": " + p.Title,
+		Message: fmt.Sprintf("%s (%s) was %s.", p.Title, p.ID, p.Status),
+	})
+}
+
+func severityForOutcome(status string) string {
+	if status == "rejected" {
+		return "warning"
+	}
+	return "info"
 }
 
 // EnqueueAlertEmail records an in-app notification and dispatches an

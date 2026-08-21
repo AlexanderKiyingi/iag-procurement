@@ -35,6 +35,16 @@ func (b *Bus) On(name string, h Handler) {
 	b.subs[name] = append(b.subs[name], h)
 }
 
+// HasSubscribers reports whether any handler is registered for name. Emit is
+// deliberately silent about an unhandled signal — it runs zero handlers and
+// returns nil — so an event with no subscriber is indistinguishable from one
+// that succeeded. This lets a test assert the wiring instead.
+func (b *Bus) HasSubscribers(name string) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.subs[name]) > 0
+}
+
 // Emit runs all handlers for e.Name. Handlers should not block indefinitely.
 func (b *Bus) Emit(ctx context.Context, e Event) error {
 	b.mu.RLock()
