@@ -51,22 +51,7 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("migration table: %w", err)
 	}
 
-	files := []string{
-		"001_schema.sql", "002_data.sql", "003_notifications.sql", "004_rbac.sql",
-		"005_procurement_mutations.sql", "006_procurement_extended_writes.sql",
-		"007_rbac_admin_write_grants.sql", "008_staff.sql", "009_pm_integration.sql",
-		"010_drop_dead_tables.sql", "011_party_portal.sql", "012_scm_party_link.sql",
-		"013_requisition_integration.sql", "014_procurement_controls.sql",
-		"015_budget_accrual.sql",
-		// Appended (not inserted) to avoid renumbering existing versions: this
-		// idempotent ALTER was orphaned by a 010_* filename collision, so fresh
-		// DBs never got requisitions.pm_workspace_owner. Safe to re-run.
-		"010_pm_workspace_owner.sql",
-		"016_procurement_request_intake.sql",
-		"017_fuel_catalogue.sql",
-		"018_requisition_approval_tiers.sql",
-		"019_receiving_payments.sql",
-	}
+	files := migrationFiles()
 	for i, name := range files {
 		version := fmt.Sprintf("%d", i+1)
 		var exists bool
@@ -95,6 +80,47 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	committed = true
 	return nil
+}
+
+// migrationFiles is the ordered list the runner applies. Order is the schema's
+// history and versions are positional (index+1), so a new migration is ALWAYS
+// appended — inserting one renumbers every migration after it and a database
+// that has already run them would skip the newcomer while re-running nothing.
+//
+// TestEveryMigrationFileIsApplied fails the build if a file in the migrations
+// directory is missing from this list.
+func migrationFiles() []string {
+	return []string{
+		"001_schema.sql", "002_data.sql", "003_notifications.sql", "004_rbac.sql",
+		"005_procurement_mutations.sql", "006_procurement_extended_writes.sql",
+		"007_rbac_admin_write_grants.sql", "008_staff.sql", "009_pm_integration.sql",
+		"010_drop_dead_tables.sql", "011_party_portal.sql", "012_scm_party_link.sql",
+		"013_requisition_integration.sql", "014_procurement_controls.sql",
+		"015_budget_accrual.sql",
+		// Appended (not inserted) to avoid renumbering existing versions: this
+		// idempotent ALTER was orphaned by a 010_* filename collision, so fresh
+		// DBs never got requisitions.pm_workspace_owner. Safe to re-run.
+		"010_pm_workspace_owner.sql",
+		"016_procurement_request_intake.sql",
+		"017_fuel_catalogue.sql",
+		"018_requisition_approval_tiers.sql",
+		"019_receiving_payments.sql",
+		// 020–022 were written, committed and embedded by the //go:embed *.sql
+		// directive, but never added here — and this list, not the directory, is
+		// what the runner reads. They had therefore never been applied to any
+		// database: the desk chain of ADR 0002 (removing the money desk, giving
+		// the chain its own terminal, requiring a reason to cancel someone
+		// else's request) existed as SQL and as an accepted decision record, and
+		// not in the schema. Only the tests referenced the files, and they read
+		// the SQL text directly rather than running it, so nothing noticed.
+		//
+		// TestEveryMigrationIsApplied now fails if a .sql file is added to the
+		// directory without being listed here.
+		"020_requisition_desk_chain.sql",
+		"021_requisition_terminal_is_authorization.sql",
+		"022_commitment_chain_ends_at_commitment.sql",
+		"023_item_stockable.sql",
+	}
 }
 
 func execSQL(ctx context.Context, tx pgx.Tx, sql string) error {

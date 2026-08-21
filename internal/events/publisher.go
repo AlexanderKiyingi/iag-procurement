@@ -87,6 +87,9 @@ type GrnPostedLine struct {
 	SKU string  `json:"sku"`
 	Qty float64 `json:"qty"`
 	UOM string  `json:"uom"`
+	// UnitPrice is the purchase cost per unit, so warehouse can value the
+	// intake for weighted-average costing instead of receiving it unpriced.
+	UnitPrice float64 `json:"unit_price"`
 }
 // All procurement domain events (requisition approval/rejection, invoice
 // received, GRN posted) are built by the Build* helpers in outbox_bridge.go and

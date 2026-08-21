@@ -87,7 +87,14 @@ Emitted atomically with the state change via the procurement outbox; consumed by
 |------------|------|-------------------|
 | `procurement.requisition.approved` / `.rejected` | Requisition reaches a terminal decision | `requisitionId`, `procurementRequisitionId`, `budgetId`, `approvedBy`/`rejectedBy`, `approvedAt`/`rejectedAt` |
 | `procurement.invoice.received` | Vendor invoice captured | `documentRef`, `vendorRef`, `amount`, `currency`, `dueDate`, **`poRef`** (PO id — lets finance clear the GR/IR accrual), `description` |
-| `procurement.grn.posted` | Goods receipt posted | `grn_id`, `po_id`, `vendor_id`, `received_by`, **`amount`** (received value = Σ `grn_lines` qty×unit_price — finance books the GR/IR accrual), `lines[]` (sku/qty/uom for warehouse intake) |
+| `procurement.grn.posted` | Goods receipt posted | `grn_id`, `po_id`, `vendor_id`, `received_by`, **`amount`** (received value = Σ `grn_lines` qty×unit_price), **`inventory_value`** (the `items.stockable` portion of `amount` — finance capitalises it and expenses the rest), `lines[]` (sku/qty/uom/**unit_price** for warehouse intake and its weighted-average costing) |
+
+> This is the **only** accounting event for a PO delivery. The
+> `warehouse.movement.posted` raised for the same goods is stamped
+> `source_doc_type: "procurement_grn"` and books nothing — both posting credited
+> GR/IR twice for one receipt. See iag-finance `docs/EVENT_CONTRACT.md` §2.1.
+> Mark service and direct-to-site items `stockable = FALSE` so their receipts
+> expense rather than capitalise; the column defaults to TRUE.
 
 `poRef` on the invoice and `amount` on the GRN drive the **GR/IR clearing** flow in finance: the GRN accrues `Dr expense / Cr GR-IR`, and the PO-referenced invoice later clears it (`Dr GR-IR / Cr AP`) instead of double-booking the expense.
 

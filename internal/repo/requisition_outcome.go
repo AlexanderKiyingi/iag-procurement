@@ -467,7 +467,7 @@ func (p *Procurement) enqueueGrnPosted(ctx context.Context, tx pgx.Tx, g *models
 	var lines []events.GrnPostedLine
 	if poID != "" {
 		rows, err := tx.Query(ctx, `
-			SELECT i.sku, pl.qty, i.uom
+			SELECT i.sku, pl.qty, i.uom, COALESCE(pl.unit_price, 0)
 			FROM po_lines pl
 			JOIN items i ON i.id = pl.item_id
 			WHERE pl.po_id = $1
@@ -477,7 +477,7 @@ func (p *Procurement) enqueueGrnPosted(ctx context.Context, tx pgx.Tx, g *models
 		}
 		for rows.Next() {
 			var l events.GrnPostedLine
-			if err := rows.Scan(&l.SKU, &l.Qty, &l.UOM); err != nil {
+			if err := rows.Scan(&l.SKU, &l.Qty, &l.UOM, &l.UnitPrice); err != nil {
 				rows.Close()
 				return err
 			}
@@ -489,18 +489,27 @@ func (p *Procurement) enqueueGrnPosted(ctx context.Context, tx pgx.Tx, g *models
 			return err
 		}
 	}
-	// Monetary value of the received lines, so finance can book the GR/IR accrual.
-	var receivedValue float64
+	// Monetary value of the received lines, split into the part that capitalises
+	// into stock and the part that is period expense. Finance books the GR/IR
+	// accrual from these — and this is the only posting the delivery gets, so
+	// getting the split right here is the difference between an inventory
+	// balance and an expense.
+	var receivedValue, inventoryValue float64
 	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(SUM(qty * unit_price), 0) FROM grn_lines WHERE grn_id = $1`, g.ID,
-	).Scan(&receivedValue); err != nil {
+		SELECT COALESCE(SUM(gl.qty * gl.unit_price), 0),
+		       COALESCE(SUM(gl.qty * gl.unit_price) FILTER (WHERE i.stockable), 0)
+		FROM grn_lines gl
+		JOIN items i ON i.id = gl.item_id
+		WHERE gl.grn_id = $1`, g.ID,
+	).Scan(&receivedValue, &inventoryValue); err != nil {
 		return err
 	}
-	valueStr := ""
+	valueStr, inventoryStr := "", ""
 	if receivedValue > 0 {
 		valueStr = fmt.Sprintf("%.2f", receivedValue)
+		inventoryStr = fmt.Sprintf("%.2f", inventoryValue)
 	}
-	key, payload, err := events.BuildGrnPosted(g.ID, poID, g.VendorID, g.ReceivedBy, valueStr, lines)
+	key, payload, err := events.BuildGrnPosted(g.ID, poID, g.VendorID, g.ReceivedBy, valueStr, inventoryStr, lines)
 	if err != nil {
 		return err
 	}

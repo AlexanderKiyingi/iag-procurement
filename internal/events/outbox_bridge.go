@@ -98,7 +98,7 @@ func BuildInvoiceReceived(documentRef, vendorRef, amount, currency, poRef string
 // (consumed by iag-warehouse to draft an intake) and returns the partition key
 // plus marshaled payload. The repo enqueues it in the GRN-write tx. The wire
 // shape is identical to the legacy direct emit.
-func BuildGrnPosted(grnID, poID, vendorID, receivedBy, receivedValue string, lines []GrnPostedLine) (key string, payload []byte, err error) {
+func BuildGrnPosted(grnID, poID, vendorID, receivedBy, receivedValue, inventoryValue string, lines []GrnPostedLine) (key string, payload []byte, err error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	data := map[string]any{
 		"grn_id":      grnID,
@@ -107,10 +107,19 @@ func BuildGrnPosted(grnID, poID, vendorID, receivedBy, receivedValue string, lin
 		"received_by": receivedBy,
 	}
 	// amount is the monetary value of the received lines (qty × unit price), so
-	// iag-finance can book the GR/IR accrual (Dr expense / Cr GR-IR clearing) at
-	// goods receipt rather than waiting for the invoice.
+	// iag-finance can book the GR/IR accrual at goods receipt rather than
+	// waiting for the invoice. This is the ONLY accounting event for a receipt
+	// against a purchase order: the warehouse movement for the same goods stands
+	// down (see iag-finance SourceDocProcurementGRN), because both booking it
+	// credited GR/IR twice for one delivery.
 	if receivedValue != "" {
 		data["amount"] = receivedValue
+	}
+	// inventory_value is the stockable portion of amount, which finance
+	// capitalises; the remainder is period expense. Only procurement can split
+	// it, because only procurement owns the item master.
+	if inventoryValue != "" {
+		data["inventory_value"] = inventoryValue
 	}
 	if len(lines) > 0 {
 		raw := make([]map[string]any, 0, len(lines))
@@ -119,7 +128,11 @@ func BuildGrnPosted(grnID, poID, vendorID, receivedBy, receivedValue string, lin
 			if uom == "" {
 				uom = "ea"
 			}
-			raw = append(raw, map[string]any{"sku": l.SKU, "qty": l.Qty, "uom": uom})
+			line := map[string]any{"sku": l.SKU, "qty": l.Qty, "uom": uom}
+			if l.UnitPrice > 0 {
+				line["unit_price"] = l.UnitPrice
+			}
+			raw = append(raw, line)
 		}
 		data["lines"] = raw
 	}
