@@ -268,14 +268,14 @@ func (a *API) deleteContract(c *gin.Context) {
 }
 
 type patchInvoiceBody struct {
-	InvoiceNo  *string  `json:"invoiceNo"`  // if present and empty: clear
-	VendorID   *string  `json:"vendorId"`
-	PoID       *string  `json:"poId"`       // if present and empty: clear
-	Amount     *float64 `json:"amount"`
-	Currency   *string  `json:"currency"`
-	Status     *string  `json:"status"`
-	MatchStatus *string `json:"matchStatus"`
-	InvoiceDate *string `json:"invoiceDate"` // if present and empty: clear
+	InvoiceNo   *string  `json:"invoiceNo"` // if present and empty: clear
+	VendorID    *string  `json:"vendorId"`
+	PoID        *string  `json:"poId"` // if present and empty: clear
+	Amount      *float64 `json:"amount"`
+	Currency    *string  `json:"currency"`
+	Status      *string  `json:"status"`
+	MatchStatus *string  `json:"matchStatus"`
+	InvoiceDate *string  `json:"invoiceDate"` // if present and empty: clear
 }
 
 func (a *API) patchInvoice(c *gin.Context) {
@@ -351,13 +351,13 @@ func (a *API) deleteInvoice(c *gin.Context) {
 }
 
 type patchPoBody struct {
-	VendorID     *string        `json:"vendorId"`
-	Title        *string        `json:"title"`
-	Currency     *string        `json:"currency"`
-	Status       *string        `json:"status"`
-	ExpectedDate *string        `json:"expectedDate"` // if present and empty: clear
-	BudgetID     *string        `json:"budgetId"`
-	Items        *[]models.PoLine `json:"items"`      // if present: replace all lines and recompute total
+	VendorID     *string          `json:"vendorId"`
+	Title        *string          `json:"title"`
+	Currency     *string          `json:"currency"`
+	Status       *string          `json:"status"`
+	ExpectedDate *string          `json:"expectedDate"` // if present and empty: clear
+	BudgetID     *string          `json:"budgetId"`
+	Items        *[]models.PoLine `json:"items"` // if present: replace all lines and recompute total
 }
 
 // validPoStatuses is the allowed set for a PATCH status transition on a PO.
@@ -512,4 +512,3 @@ func (a *API) deleteGrn(c *gin.Context) {
 	a.InvalidateSeedCache(c.Request.Context())
 	c.Status(http.StatusNoContent)
 }
-

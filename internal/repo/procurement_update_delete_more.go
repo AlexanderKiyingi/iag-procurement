@@ -1020,4 +1020,3 @@ func (p *Procurement) DeleteGrn(ctx context.Context, id string, auditUser string
 	}
 	return tx.Commit(ctx)
 }
-

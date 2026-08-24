@@ -93,10 +93,10 @@ func (s *Store) ListPermissions(ctx context.Context) ([]PermissionRow, error) {
 }
 
 type GroupRow struct {
-	ID           int64    `json:"id"`
-	Name         string   `json:"name"`
-	Description  string   `json:"description"`
-	Permissions  []string `json:"permissions"`
+	ID          int64    `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Permissions []string `json:"permissions"`
 }
 
 func (s *Store) ListGroups(ctx context.Context) ([]GroupRow, error) {
@@ -127,12 +127,12 @@ func (s *Store) ListGroups(ctx context.Context) ([]GroupRow, error) {
 }
 
 type UserListRow struct {
-	ID           int64    `json:"id"`
-	Email        string   `json:"email"`
-	IsActive     bool     `json:"isActive"`
-	IsSuperuser  bool     `json:"isSuperuser"`
-	Groups       []string `json:"groups"`
-	Permissions  []string `json:"permissions"`
+	ID          int64    `json:"id"`
+	Email       string   `json:"email"`
+	IsActive    bool     `json:"isActive"`
+	IsSuperuser bool     `json:"isSuperuser"`
+	Groups      []string `json:"groups"`
+	Permissions []string `json:"permissions"`
 }
 
 func (s *Store) ListUsers(ctx context.Context) ([]UserListRow, error) {

@@ -54,7 +54,7 @@ func (a *API) PortalPOs(c *gin.Context) {
 	defer rows.Close()
 	type po struct {
 		ID, Title, Currency, Status, CreatedAt string
-		Total                                    float64
+		Total                                  float64
 	}
 	var list []po
 	for rows.Next() {
