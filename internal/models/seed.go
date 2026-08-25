@@ -57,6 +57,12 @@ type Requisition struct {
 	Total      float64 `json:"total"`
 	Currency   string  `json:"currency"`
 	BudgetID   string  `json:"budgetId"`
+	// PMRequisitionID is the id of the Project Manager request this row was
+	// imported from, cash or material. It was stored from the start but never
+	// returned, so a caller could not tell which of its own requests a
+	// requisition belonged to — which is what an app needs in order to show the
+	// approval ladder's verdict next to the request the user raised.
+	PMRequisitionID string `json:"pmRequisitionId,omitempty"`
 }
 
 type Rfq struct {

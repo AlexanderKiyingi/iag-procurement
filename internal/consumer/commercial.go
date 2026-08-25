@@ -18,6 +18,18 @@ import (
 
 const pmRequisitionSubmitted = "pm.requisition.submitted"
 
+// pmPurchaseRequisitionSubmitted is the *material* request raised in the
+// Project Manager app, as opposed to the cash request above.
+// iag-project-management has emitted it on submit for some time; nothing
+// consumed it, so material requests never reached the approval ladder and the
+// app ran a chain of its own that the platform knew nothing about.
+//
+// Both land in the same table keyed on pm_requisition_id. The two id spaces do
+// not overlap — a cash requisition id is an int ("12"), a purchase requisition
+// is "PR-2026-0001" — and the column is unique, so a collision would be
+// rejected rather than silently merging two requests.
+const pmPurchaseRequisitionSubmitted = "pm.purchase_requisition.submitted"
+
 // govRequisitionApproved is emitted by iag-contract-management when a governance
 // requisition completes its approval chain — procurement imports it for sourcing.
 const govRequisitionApproved = "contracts.requisition.approved"
@@ -54,6 +66,19 @@ type pmRequisitionData struct {
 	Urgency              string `json:"urgency"`
 	Payee                string `json:"payee"`
 	Justification        string `json:"justification"`
+}
+
+type pmPurchaseRequisitionData struct {
+	PurchaseRequisitionID string `json:"purchaseRequisitionId"`
+	WorkspaceOwnerUserID  string `json:"workspaceOwnerUserId"`
+	Title                 string `json:"title"`
+	Total                 string `json:"total"`
+	Currency              string `json:"currency"`
+	Status                string `json:"status"`
+	Requester             string `json:"requester"`
+	Dept                  string `json:"dept"`
+	Priority              string `json:"priority"`
+	Justification         string `json:"justification"`
 }
 
 type Commercial struct {
@@ -177,6 +202,8 @@ func (c *Commercial) handleMessage(ctx context.Context, payload []byte) error {
 	switch evt.Type {
 	case pmRequisitionSubmitted:
 		return c.handlePMRequisition(ctx, evt)
+	case pmPurchaseRequisitionSubmitted:
+		return c.handlePMPurchaseRequisition(ctx, evt)
 	case govRequisitionApproved:
 		return c.handleGovRequisitionApproved(ctx, evt)
 	default:
@@ -233,6 +260,79 @@ func (c *Commercial) handleGovRequisitionApproved(ctx context.Context, evt Platf
 		return err
 	}
 	log.Printf("procurement: imported governance requisition %s -> %s", key, row.ID)
+	return c.procurement.MarkEventProcessed(ctx, evt.ID)
+}
+
+// handlePMPurchaseRequisition imports a Project Manager material request as a
+// requisition so it runs the real approval ladder — the amount-banded
+// pm/accounts/GM/CEO desks in requisition_approval_desks — instead of the
+// app-local chain that only the app knew about.
+//
+// It reuses the cash-requisition import verbatim: same table, same idempotency
+// key, same budget resolution. The only differences are the payload shape and
+// that a material request has no payee.
+func (c *Commercial) handlePMPurchaseRequisition(ctx context.Context, evt PlatformEvent) error {
+	if evt.ID != "" {
+		if done, err := c.procurement.IsEventProcessed(ctx, evt.ID); err != nil {
+			return err
+		} else if done {
+			return nil
+		}
+	}
+
+	var data pmPurchaseRequisitionData
+	if err := json.Unmarshal(evt.Data, &data); err != nil {
+		return err
+	}
+	pmID := strings.TrimSpace(data.PurchaseRequisitionID)
+	title := strings.TrimSpace(data.Title)
+	if pmID == "" || title == "" {
+		return c.procurement.MarkEventProcessed(ctx, evt.ID) // malformed but not retryable
+	}
+
+	// No amount means nothing for the money desks to band on. Left un-imported
+	// rather than imported at zero, which would reach the chain terminal without
+	// any desk actually engaging.
+	total, _ := strconv.ParseFloat(strings.TrimSpace(data.Total), 64)
+	if total <= 0 {
+		return c.procurement.MarkEventProcessed(ctx, evt.ID)
+	}
+
+	dept := strings.TrimSpace(data.Dept)
+	budgetID, err := c.procurement.ResolveBudgetForDept(ctx, dept)
+	if err != nil {
+		return err
+	}
+
+	row, err := c.procurement.ImportPMRequisition(
+		ctx,
+		pmID,
+		strings.TrimSpace(data.WorkspaceOwnerUserID),
+		title,
+		dept,
+		strings.TrimSpace(data.Requester),
+		mapPMUrgency(data.Priority),
+		mapPMStatus(data.Status),
+		total,
+		strings.TrimSpace(data.Currency),
+		budgetID,
+		"", // a material request has no payee
+		strings.TrimSpace(data.Justification),
+		evt.ID,
+	)
+	if errors.Is(err, repo.ErrPMRequisitionExists) {
+		return c.procurement.MarkEventProcessed(ctx, evt.ID) // already imported
+	}
+	if err != nil {
+		return err
+	}
+	// Same signal the cash-requisition import raises, so anything already
+	// watching for a pending requisition picks this one up too.
+	if c.bus != nil && row != nil {
+		body, _ := json.Marshal(map[string]string{"id": row.ID, "title": row.Title, "pmId": pmID})
+		_ = c.bus.Emit(ctx, signals.Event{Name: events.RequisitionPending, Payload: body})
+	}
+	log.Printf("procurement: imported PM material request pmId=%s -> %s", pmID, row.ID)
 	return c.procurement.MarkEventProcessed(ctx, evt.ID)
 }
 

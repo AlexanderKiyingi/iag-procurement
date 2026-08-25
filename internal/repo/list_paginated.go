@@ -96,7 +96,8 @@ func (p *Procurement) ListRequisitions(ctx context.Context, limit, offset int, q
 		where = "WHERE title ILIKE " + sp + " OR dept ILIKE " + sp + " OR requester ILIKE " + sp + " OR status ILIKE " + sp + " "
 	}
 	rows, err := p.pool.Query(ctx, `
-		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id
+		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id,
+		       COALESCE(pm_requisition_id, '')
 		FROM requisitions `+where+`ORDER BY id LIMIT `+lp+` OFFSET `+op, args...)
 	if err != nil {
 		return nil, err
@@ -107,7 +108,7 @@ func (p *Procurement) ListRequisitions(ctx context.Context, limit, offset int, q
 		var r models.Requisition
 		var created, needed *time.Time
 		if err := rows.Scan(&r.ID, &r.Title, &r.Dept, &r.Requester, &r.Priority, &r.Status,
-			&created, &needed, &r.Total, &r.Currency, &r.BudgetID); err != nil {
+			&created, &needed, &r.Total, &r.Currency, &r.BudgetID, &r.PMRequisitionID); err != nil {
 			return nil, err
 		}
 		r.CreatedAt = dayStr(created)
