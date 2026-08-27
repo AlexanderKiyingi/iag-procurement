@@ -95,12 +95,6 @@ func Seed(ctx context.Context, pool *pgxpool.Pool, defaultAdminPassword string) 
 	if err != nil {
 		return err
 	}
-	viewerPass := "viewer123"
-	hashViewer, err := bcrypt.GenerateFromPassword([]byte(viewerPass), bcrypt.DefaultCost)
-	if err != nil {
-		return err
-	}
-
 	for _, p := range bootstrapPermissions {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO auth_permissions (code, name, description)
@@ -159,21 +153,16 @@ func Seed(ctx context.Context, pool *pgxpool.Pool, defaultAdminPassword string) 
 		return err
 	}
 
-	var viewerUID int64
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO auth_users (email, password_hash, is_superuser)
-		VALUES ($1, $2, FALSE) RETURNING id`,
-		"viewer@iag.local", string(hashViewer)).Scan(&viewerUID); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO auth_user_groups (user_id, group_id) VALUES ($1, $2)`, viewerUID, viewerGroupID); err != nil {
-		return err
-	}
+	// The Viewers group is still created and still carries its read permissions — it is
+	// authorisation configuration. The demo account that used to occupy it,
+	// viewer@iag.local with the hard-coded password "viewer123", was a seeded login and
+	// was removed with the rest of the demo data. Grant a real user the Viewers group
+	// instead.
 
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 	committed = true
-	log.Printf("rbac: bootstrapped admin@iag.local and viewer@iag.local (dev passwords — change in production)")
+	log.Printf("rbac: bootstrapped admin@iag.local (dev password — change in production)")
 	return nil
 }

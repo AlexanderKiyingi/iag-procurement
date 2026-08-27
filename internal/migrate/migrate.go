@@ -121,6 +121,9 @@ func migrationFiles() []string {
 		"022_commitment_chain_ends_at_commitment.sql",
 		"023_item_stockable.sql",
 		"024_search_trigram_indexes.sql",
+		"025_purge_demo_seed.sql",
+		"026_external_refs.sql",
+		"027_uuid_entity_ids.sql",
 	}
 }
 

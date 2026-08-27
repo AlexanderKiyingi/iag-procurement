@@ -1,6 +1,6 @@
 # Bootstrap users (empty database)
 
-When the API starts, `rbac.Seed` runs after migrations. If `auth_users` has **no rows**, it creates permissions, groups, and two users for local or first-time setup.
+When the API starts, `rbac.Seed` runs after migrations. If `auth_users` has **no rows**, it creates permissions, groups, and one user for local or first-time setup.
 
 **Source:** `internal/rbac/seed.go`
 
@@ -24,7 +24,6 @@ So seed data is applied **once per environment**: migrations once per version, R
 | Variable | Effect |
 |----------|--------|
 | `DEFAULT_ADMIN_PASSWORD` | If set (non-empty), used as the plaintext password for **`admin@iag.local`** before hashing. If unset, the default **`admin123`** is used. |
-| *(none)* | Viewer password is always **`viewer123`** at bootstrap (hard-coded in seed). |
 
 Change all passwords in production after first login.
 
@@ -33,7 +32,12 @@ Change all passwords in production after first login.
 | Email | `is_superuser` | Group | Password (initial) |
 |-------|----------------|-------|---------------------|
 | `admin@iag.local` | `true` | Administrators | `DEFAULT_ADMIN_PASSWORD` or **`admin123`** |
-| `viewer@iag.local` | `false` | Viewers | **`viewer123`** |
+
+> **`viewer@iag.local` is no longer created.** It was a demo login with the hard-coded
+> password `viewer123`, so it went with the rest of the platform's seed data; migration
+> `025_purge_demo_seed.sql` removes it from databases that already have it. The
+> **Viewers** group and its read permissions remain — they are authorisation
+> configuration. Assign a real user to that group instead.
 
 ## Groups and permissions (summary)
 
@@ -47,11 +51,11 @@ Exact permission codes are defined in `internal/rbac/seed.go` (`bootstrapPermiss
 On successful bootstrap the API logs:
 
 ```text
-rbac: bootstrapped admin@iag.local and viewer@iag.local (dev passwords — change in production)
+rbac: bootstrapped admin@iag.local (dev password — change in production)
 ```
 
 ## Production checklist
 
 1. Set a strong `DEFAULT_ADMIN_PASSWORD` before the **first** start against an empty database, or change `admin@iag.local` immediately after login.
-2. Rotate **`viewer@iag.local`** (or remove the account) before exposing the API.
+2. Confirm `viewer@iag.local` is absent — migration `025_purge_demo_seed.sql` removes it, and the bootstrap no longer creates it.
 3. Prefer creating real users via your admin workflow once RBAC is configured.
