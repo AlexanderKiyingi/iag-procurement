@@ -71,12 +71,25 @@ func NewS3Store(endpoint, region, bucket, accessKey, secretKey string, useSSL bo
 }
 
 func (s *S3Store) Put(key, contentType string, r io.Reader) (int64, error) {
+	// Establish the length BEFORE wrapping. Go sets Content-Length itself for a
+	// *bytes.Reader, *bytes.Buffer or *strings.Reader, but only when that type
+	// is handed to it directly - wrapping in a counter hides it, Go falls back
+	// to chunked transfer encoding, and an S3-compatible endpoint that requires
+	// a length rejects the upload with "411 Length Required".
+	size := int64(-1)
+	if lr, ok := r.(interface{ Len() int }); ok {
+		size = int64(lr.Len())
+	}
+
 	// Counted as it streams, so the result is what the bucket received rather
 	// than what the caller claimed.
 	counter := &countingReader{r: r}
 	req, err := http.NewRequest(http.MethodPut, s.pre.PresignPut(key, presignExpiry), counter)
 	if err != nil {
 		return 0, fmt.Errorf("s3 put %s: %w", key, err)
+	}
+	if size >= 0 {
+		req.ContentLength = size
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
