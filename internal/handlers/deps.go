@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"github.com/alvor-technologies/iag-platform-go/objectstore"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"iag-procurement/backend/internal/auditlog"
@@ -29,4 +30,7 @@ type Deps struct {
 	Audit        *auditlog.Store
 	PlatformAuth *middleware.PlatformAuth
 	Publisher    *events.Publisher
+	// Files is nil when object storage is unconfigured; the attachment
+	// endpoints answer 503 rather than the service refusing to start.
+	Files *objectstore.S3Store
 }

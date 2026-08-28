@@ -99,6 +99,15 @@ type Config struct {
 	// ("lapse" releases open encumbrances, "carry" retains them).
 	PeriodCloseEnabled bool
 	PeriodClosePolicy  string
+	// S3-compatible object storage for procurement attachments (supplier
+	// invoices, delivery notes). Unset means uploads are unavailable rather
+	// than silently written somewhere ephemeral.
+	S3Endpoint        string
+	S3Region          string
+	S3Bucket          string
+	S3AccessKeyID     string
+	S3SecretAccessKey string
+	S3UseSSL          bool
 }
 
 func Load() (*Config, error) {
@@ -193,6 +202,14 @@ func Load() (*Config, error) {
 
 		PeriodCloseEnabled: strings.EqualFold(os.Getenv("PROCUREMENT_PERIOD_CLOSE_ENABLED"), "true"),
 		PeriodClosePolicy:  strings.ToLower(getenv("PROCUREMENT_PERIOD_CLOSE_POLICY", "lapse")),
+		S3Endpoint:         getenv("S3_ENDPOINT", ""),
+		// "auto" matches Cloudflare R2 and the rest of the platform.
+		S3Region:          getenv("S3_REGION", "auto"),
+		S3Bucket:          getenv("S3_BUCKET", ""),
+		S3AccessKeyID:     getenv("S3_ACCESS_KEY_ID", ""),
+		S3SecretAccessKey: getenv("S3_SECRET_ACCESS_KEY", ""),
+		// Only a literal "false" disables TLS, so a typo fails safe.
+		S3UseSSL: !strings.EqualFold(getenv("S3_USE_SSL", "true"), "false"),
 	}
 
 	if c.DatabaseURL == "" {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/alvor-technologies/iag-platform-go/objectstore"
 	"log"
 	"net/http"
 	"os"
@@ -293,6 +294,17 @@ func main() {
 	r.Use(otelgin.Middleware(cfg.ServiceName))
 	r.Use(gin.Logger(), gin.Recovery())
 
+	// Object storage for attachments. Nil when unconfigured, which the
+	// attachment endpoints report as 503 rather than failing at boot - the rest
+	// of procurement does not depend on it.
+	files := objectstore.NewS3Store(cfg.S3Endpoint, cfg.S3Region, cfg.S3Bucket,
+		cfg.S3AccessKeyID, cfg.S3SecretAccessKey, cfg.S3UseSSL)
+	if files == nil {
+		log.Printf("attachment storage: unconfigured — uploads unavailable (set S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY)")
+	} else {
+		log.Printf("attachment storage: s3 bucket=%s endpoint=%s", cfg.S3Bucket, cfg.S3Endpoint)
+	}
+
 	api := handlers.NewAPI(handlers.Deps{
 		Pool:         pool,
 		Seed:         repo.NewSeed(pool),
@@ -306,6 +318,7 @@ func main() {
 		Audit:        auditStore,
 		PlatformAuth: platformAuth,
 		Publisher:    publisher,
+		Files:        files,
 	})
 	api.Mount(r)
 

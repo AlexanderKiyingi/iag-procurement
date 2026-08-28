@@ -35,6 +35,7 @@ type API struct {
 	audit        *auditlog.Store
 	platformAuth *middleware.PlatformAuth
 	publisher    *events.Publisher
+	files        presignPutter
 }
 
 func NewAPI(d Deps) *API {
@@ -51,6 +52,14 @@ func NewAPI(d Deps) *API {
 		audit:        d.Audit,
 		platformAuth: d.PlatformAuth,
 		publisher:    d.Publisher,
+		// A typed nil would make the interface non-nil and defeat the guard
+		// in the handlers, so leave it unset when storage is unconfigured.
+		files: func() presignPutter {
+			if d.Files == nil {
+				return nil
+			}
+			return d.Files
+		}(),
 	}
 }
 
@@ -94,6 +103,13 @@ func (a *API) Mount(r *gin.Engine) {
 		}
 		{
 			sec.GET("/auth/me", a.getMe)
+
+			// Attachments for procurement records. Bytes never pass through this
+			// service: create returns a presigned PUT and download returns a
+			// presigned GET, so the browser talks to the bucket directly.
+			sec.POST("/attachments", a.postAttachment)
+			sec.GET("/attachments", a.listAttachments)
+			sec.GET("/attachments/:id/url", a.getAttachmentURL)
 
 			data := sec.Group("")
 			data.Use(middleware.RequirePermission(rbac.ViewSeed))
