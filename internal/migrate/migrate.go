@@ -124,6 +124,8 @@ func migrationFiles() []string {
 		"025_purge_demo_seed.sql",
 		"026_external_refs.sql",
 		"027_uuid_entity_ids.sql",
+		"028_monolith_recurring_invoices.sql",
+		"029_invoice_grn_fk.sql",
 	}
 }
 
