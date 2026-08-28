@@ -35,12 +35,21 @@ func (p *Procurement) SyncSCMParty(ctx context.Context, partyID, businessID, sup
 		return nil
 	}
 
+	// vendors.id became uuid in migration 027_uuid_entity_ids, after this was
+	// written. It used to insert the SCM business id ("COOP-001") straight into
+	// id, which now fails on type - so a party sync would error at runtime even
+	// with a healthy broker. The id is derived from the business id instead:
+	// deterministic, so the same party always resolves to the same vendor row
+	// and a replayed event updates rather than duplicating. The business id
+	// itself is still carried in scm_business_id, which is where it belongs.
 	_, err = p.pool.Exec(ctx, `
 		INSERT INTO vendors (
 			id, name, logo, category, contact, email, phone, country, terms,
 			rating, status, total_spend, open_pos, party_id, scm_business_id
 		) VALUES (
-			$2, $3, '', 'SCM Sync', '', '', '', '', '',
+			uuid_in(overlay(overlay(md5('iag:scm:party:' || $2)
+			  placing '3' from 13) placing '8' from 17)::cstring),
+			$3, '', 'SCM Sync', '', '', '', '', '',
 			0, 'Active', 0, 0, $1::uuid, $2
 		)
 		ON CONFLICT (id) DO UPDATE SET
