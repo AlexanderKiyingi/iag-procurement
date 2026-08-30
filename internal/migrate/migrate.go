@@ -126,6 +126,7 @@ func migrationFiles() []string {
 		"027_uuid_entity_ids.sql",
 		"028_monolith_recurring_invoices.sql",
 		"029_invoice_grn_fk.sql",
+		"030_item_attrs.sql",
 	}
 }
 

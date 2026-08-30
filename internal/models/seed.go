@@ -1,5 +1,7 @@
 package models
 
+import "encoding/json"
+
 // JSON field names match procurement-web/lib/types.ts (SeedData).
 
 type Vendor struct {
@@ -19,16 +21,20 @@ type Vendor struct {
 }
 
 type Item struct {
-	ID               string  `json:"id"`
-	SKU              string  `json:"sku"`
-	Name             string  `json:"name"`
-	Category         string  `json:"category"`
-	UOM              string  `json:"uom"`
-	Stock            float64 `json:"stock"`
-	Reorder          float64 `json:"reorder"`
-	LastPrice        float64 `json:"lastPrice"`
-	Currency         string  `json:"currency"`
-	PreferredVendor  string  `json:"preferredVendor"`
+	ID              string  `json:"id"`
+	SKU             string  `json:"sku"`
+	Name            string  `json:"name"`
+	Category        string  `json:"category"`
+	UOM             string  `json:"uom"`
+	Stock           float64 `json:"stock"`
+	Reorder         float64 `json:"reorder"`
+	LastPrice       float64 `json:"lastPrice"`
+	Currency        string  `json:"currency"`
+	PreferredVendor string  `json:"preferredVendor"`
+	// Attrs is a caller-owned extension bag (migration 030). Procurement stores
+	// it and hands it back; it never reads it. Raw JSON so this service takes no
+	// position on a shape it does not own.
+	Attrs json.RawMessage `json:"attrs,omitempty"`
 }
 
 type Budget struct {

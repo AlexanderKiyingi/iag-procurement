@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -20,6 +21,9 @@ type patchItemBody struct {
 	LastPrice         *float64 `json:"lastPrice"`
 	Currency          *string  `json:"currency"`
 	PreferredVendorID *string  `json:"preferredVendorId"` // if present and empty: clear
+	// Absent leaves the stored bag alone; present replaces it wholesale. See
+	// the note on the UPDATE in the repo for why it is not merged.
+	Attrs json.RawMessage `json:"attrs"`
 }
 
 func (a *API) patchItem(c *gin.Context) {
@@ -43,7 +47,7 @@ func (a *API) patchItem(c *gin.Context) {
 		id,
 		body.SKU, body.Name, body.Category, body.Uom,
 		body.Stock, body.Reorder, body.LastPrice, body.Currency,
-		pref,
+		pref, body.Attrs,
 		authActorEmail(c),
 	)
 	if mapProcurementErr(c, err) {

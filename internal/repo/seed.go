@@ -56,7 +56,7 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 
 	{
 		rows, err := s.pool.Query(ctx, `
-		SELECT id, sku, name, category, uom, stock, reorder, last_price, currency, preferred_vendor_id
+		SELECT id, sku, name, category, uom, stock, reorder, last_price, currency, preferred_vendor_id, attrs
 		FROM items ORDER BY id`)
 		if err != nil {
 			return nil, fmt.Errorf("items: %w", err)
@@ -64,7 +64,9 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 		for rows.Next() {
 			var it models.Item
 			var pref *string
-			if err := rows.Scan(&it.ID, &it.SKU, &it.Name, &it.Category, &it.UOM, &it.Stock, &it.Reorder, &it.LastPrice, &it.Currency, &pref); err != nil {
+			// The seed payload is a read path too; an item whose bag is only
+			// returned by the paginated list would appear to lose it here.
+			if err := rows.Scan(&it.ID, &it.SKU, &it.Name, &it.Category, &it.UOM, &it.Stock, &it.Reorder, &it.LastPrice, &it.Currency, &pref, &it.Attrs); err != nil {
 				rows.Close()
 				return nil, err
 			}

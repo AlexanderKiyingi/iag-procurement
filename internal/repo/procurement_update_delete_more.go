@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ func (p *Procurement) UpdateItem(
 	stock, reorder, lastPrice *float64,
 	currency *string,
 	preferredVendorID *string,
+	attrs json.RawMessage,
 	auditUser string,
 ) (*models.Item, error) {
 	id = strings.TrimSpace(id)
@@ -58,12 +60,22 @@ func (p *Procurement) UpdateItem(
 			reorder = COALESCE($7, reorder),
 			last_price = COALESCE($8, last_price),
 			currency = COALESCE($9, currency),
+			-- The ELSE branch is cast to uuid, not text: migration 027 retyped
+			-- this column, and a CASE whose branches are uuid and text is
+			-- rejected outright ("CASE types text and uuid cannot be matched"),
+			-- so every PATCH /items failed on a database that had run 027.
+			-- NULLIF keeps an empty string meaning "clear" rather than
+			-- exploding on an invalid uuid.
 			preferred_vendor_id = CASE
 				WHEN $10::text IS NULL THEN preferred_vendor_id
-				ELSE $10::text
-			END
+				ELSE NULLIF($10::text, '')::uuid
+			END,
+			-- A patch that names no bag leaves the stored one alone; naming one
+			-- replaces it wholesale, because the caller owns its shape and a
+			-- merge here would resurrect keys it deliberately removed.
+			attrs = COALESCE($11::jsonb, attrs)
 		WHERE id = $1`,
-		id, sku, name, category, uom, stock, reorder, lastPrice, currency, pref,
+		id, sku, name, category, uom, stock, reorder, lastPrice, currency, pref, nullableJSON(attrs),
 	)
 	if err != nil {
 		return nil, err
@@ -86,9 +98,9 @@ func (p *Procurement) UpdateItem(
 	var out models.Item
 	var prefOut *string
 	if err := tx.QueryRow(ctx, `
-		SELECT id, sku, name, category, uom, stock, reorder, last_price, currency, preferred_vendor_id
+		SELECT id, sku, name, category, uom, stock, reorder, last_price, currency, preferred_vendor_id, attrs
 		FROM items WHERE id = $1`, id,
-	).Scan(&out.ID, &out.SKU, &out.Name, &out.Category, &out.UOM, &out.Stock, &out.Reorder, &out.LastPrice, &out.Currency, &prefOut); err != nil {
+	).Scan(&out.ID, &out.SKU, &out.Name, &out.Category, &out.UOM, &out.Stock, &out.Reorder, &out.LastPrice, &out.Currency, &prefOut, &out.Attrs); err != nil {
 		return nil, err
 	}
 	if prefOut != nil {

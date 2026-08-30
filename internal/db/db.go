@@ -2,10 +2,12 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	platformdb "github.com/alvor-technologies/iag-platform-go/db"
@@ -47,10 +49,27 @@ func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	// public as a fallback for any extensions (pg_trgm, uuid-ossp, etc.) that
 	// live there.
 	cfg.ConnConfig.RuntimeParams["search_path"] = Schema + ", public"
-	// Ensure the schema exists on every new connection. Idempotent and runs
-	// at most once per pooled connection, not per query.
+	// Ensure the schema exists on every new connection. Runs at most once per
+	// pooled connection, not per query.
 	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		_, err := conn.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+Schema)
+		// IF NOT EXISTS is not concurrency-safe: it checks, then creates, and two
+		// connections opening at once against a database with no schema yet both
+		// pass the check — the loser gets a duplicate-key violation on
+		// pg_namespace. Because this runs on every pooled connection, the pool
+		// races itself the first time it warms up, and the service fails to boot
+		// with "duplicate key value violates unique constraint
+		// pg_namespace_nspname_index", which reads like data corruption and is
+		// really two connections being polite at the same moment. Matters on
+		// multi-replica starts and on any fresh database.
+		//
+		// A 23505 here can only mean another connection created the schema first,
+		// which is the outcome we wanted. Anything else is a real error.
+		// Same fix as iag-warehouse's internal/db.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil
+		}
 		return err
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)

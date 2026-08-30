@@ -62,6 +62,17 @@ func (p *Procurement) ListVendors(ctx context.Context, limit, offset int, q stri
 
 // ListItems returns a filtered, paged slice of catalog items (q matches sku,
 // name, or category).
+//
+// preferred_vendor_id is cast to text before COALESCE because migration 027
+// retyped it to UUID. COALESCE(uuid, '') asks Postgres to resolve a common type
+// for uuid and an empty-string literal; that fails at execution whatever the
+// data holds, so this query returned an error rather than rows on every
+// database that has run 027.
+//
+// The same pattern is still present on nine other queries in this package
+// (requisitions, purchase orders, invoices, budget lookups). They are
+// deliberately not touched here — see the note on CreateItem: 027's fallout is
+// wider than this change and is worth handling as its own piece of work.
 func (p *Procurement) ListItems(ctx context.Context, limit, offset int, q string) ([]models.Item, error) {
 	args, sp, lp, op := pageArgs(q, limit, offset)
 	where := ""
@@ -69,7 +80,8 @@ func (p *Procurement) ListItems(ctx context.Context, limit, offset int, q string
 		where = "WHERE sku ILIKE " + sp + " OR name ILIKE " + sp + " OR category ILIKE " + sp + " "
 	}
 	rows, err := p.pool.Query(ctx, `
-		SELECT id, sku, name, category, uom, stock, reorder, last_price, currency, COALESCE(preferred_vendor_id, '')
+		SELECT id, sku, name, category, uom, stock, reorder, last_price, currency,
+		       COALESCE(preferred_vendor_id::text, ''), attrs
 		FROM items `+where+`ORDER BY id LIMIT `+lp+` OFFSET `+op, args...)
 	if err != nil {
 		return nil, err
@@ -79,7 +91,7 @@ func (p *Procurement) ListItems(ctx context.Context, limit, offset int, q string
 	for rows.Next() {
 		var it models.Item
 		if err := rows.Scan(&it.ID, &it.SKU, &it.Name, &it.Category, &it.UOM, &it.Stock, &it.Reorder,
-			&it.LastPrice, &it.Currency, &it.PreferredVendor); err != nil {
+			&it.LastPrice, &it.Currency, &it.PreferredVendor, &it.Attrs); err != nil {
 			return nil, err
 		}
 		out = append(out, it)

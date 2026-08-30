@@ -42,7 +42,7 @@ func TestBudgetLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vendor: %v", err)
 	}
-	item, err := p.CreateItem(ctx, "SKU-"+uuid.NewString(), "Widget", "Supplies", "ea", 0, 0, 0, "USD", "", approver)
+	item, err := p.CreateItem(ctx, "SKU-"+uuid.NewString(), "Widget", "Supplies", "ea", 0, 0, 0, "USD", "", nil, approver)
 	if err != nil {
 		t.Fatalf("item: %v", err)
 	}

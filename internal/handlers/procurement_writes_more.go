@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -54,6 +55,10 @@ type postItemBody struct {
 	LastPrice         float64 `json:"lastPrice"`
 	Currency          string  `json:"currency"`
 	PreferredVendorID string  `json:"preferredVendorId"`
+	// Caller-owned extension bag (migration 030). Stored and returned; never
+	// read here. It is what lets a catalogue client keep the columns that are
+	// its own concern — a sales account, a sell price — instead of losing them.
+	Attrs json.RawMessage `json:"attrs"`
 }
 
 func (a *API) postItem(c *gin.Context) {
@@ -69,7 +74,7 @@ func (a *API) postItem(c *gin.Context) {
 	row, err := a.procurement.CreateItem(c.Request.Context(),
 		body.SKU, body.Name, strings.TrimSpace(body.Category), strings.TrimSpace(body.Uom),
 		body.Stock, body.Reorder, body.LastPrice, strings.TrimSpace(body.Currency),
-		body.PreferredVendorID,
+		body.PreferredVendorID, body.Attrs,
 		authActorEmail(c))
 	if mapProcurementErr(c, err) {
 		return
