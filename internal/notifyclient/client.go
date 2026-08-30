@@ -15,8 +15,12 @@ import (
 // DispatchRequest mirrors iag-notifications/internal/domain.DispatchRequest.
 // Fields use the JSON tags expected by the central service.
 type DispatchRequest struct {
-	Channel       string            `json:"channel"`
-	Recipient     string            `json:"recipient"`
+	Channel   string `json:"channel"`
+	Recipient string `json:"recipient"`
+	// Audience is a logical destination ("approvals.procurement") whose real
+	// addresses an administrator maintains centrally. Recipient stays the
+	// fallback until the audience is routed, so adopting one is safe.
+	Audience      string            `json:"audience,omitempty"`
 	TemplateID    string            `json:"templateId"`
 	Variables     map[string]string `json:"variables,omitempty"`
 	EventID       string            `json:"eventId,omitempty"`

@@ -116,7 +116,7 @@ func severityForOutcome(status string) string {
 // per-recipient EventID derived from the in-app row id makes retries
 // safe.
 func (s *Service) EnqueueAlertEmail(ctx context.Context, p AlertJobPayload) error {
-	if len(p.To) == 0 {
+	if len(p.To) == 0 && p.Audience == "" {
 		return fmt.Errorf("notifications: missing recipients")
 	}
 	body := p.Message
@@ -144,20 +144,33 @@ func (s *Service) EnqueueAlertEmail(ctx context.Context, p AlertJobPayload) erro
 	// source of truth for the operator-facing alert, and the outcome event went
 	// to the transactional outbox before this was ever called. A lost email
 	// delays a nudge, never an approval.
+	// An audience with no explicit recipients is one dispatch: the central
+	// service fans it out to whatever addresses the administrator has routed.
+	targets := p.To
+	if len(targets) == 0 {
+		targets = []string{""}
+	}
+
 	var wg sync.WaitGroup
-	for _, to := range p.To {
+	for _, to := range targets {
 		wg.Add(1)
 		go func(to string) {
 			defer wg.Done()
+			// One eventID across recipients is correct: the central service
+			// dedupes on (eventId, channel, recipient), so each address gets
+			// its own delivery while a retry of this same alert does not
+			// duplicate any of them.
 			if _, err := s.notify.Dispatch(ctx, notifyclient.DispatchRequest{
 				Channel:    "email",
 				Recipient:  to,
+				Audience:   p.Audience,
 				TemplateID: "procurement.alert",
 				Variables:  variables,
 				EventID:    eventID,
 			}); err != nil {
 				slog.WarnContext(ctx, "procurement.alert dispatch failed",
 					"recipient", to,
+					"audience", p.Audience,
 					"eventId", eventID,
 					"err", err,
 				)
