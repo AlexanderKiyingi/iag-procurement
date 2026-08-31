@@ -114,12 +114,19 @@ func (a *API) listAttachments(c *gin.Context) {
 			"code": "INVALID_QUERY", "message": "ownerRef is required"}})
 		return
 	}
+	// ownerType is optional and narrows the result. Two record kinds can carry
+	// the same reference - a purchase order and the invoice raised against it
+	// are both addressed by an id the caller chose - so a client that knows
+	// which kind it is asking about should be able to say so rather than
+	// filtering the other kind out on the far side.
+	ownerType := strings.TrimSpace(c.Query("ownerType"))
 	rows, err := a.pool.Query(c.Request.Context(), `
 		SELECT id::text, owner_type, owner_ref, filename, mime, size_bytes,
 		       coalesce(uploaded_by,''), created_at, storage_key IS NULL
 		  FROM public.attachments
 		 WHERE owner_service = 'procurement' AND owner_ref = $1
-		 ORDER BY created_at DESC`, ref)
+		   AND ($2 = '' OR owner_type = $2)
+		 ORDER BY created_at DESC`, ref, ownerType)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "DB_ERROR", "message": err.Error()}})
 		return
@@ -170,6 +177,56 @@ func (a *API) getAttachmentURL(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"filename": filename, "url": a.files.PresignGet(key, attachmentURLExpiry)})
 }
 
+// deleteAttachment removes one attachment: the object first, then the row.
+//
+// That order is deliberate, and it is the opposite of the create path. On
+// create the row is written before the object exists, so a failure leaves a
+// visible record whose bytes are missing. On delete the object goes first, so a
+// failure leaves a visible record whose bytes are gone - both are states an
+// operator can see and act on. Deleting the row first would leave an object
+// nobody has a reference to: invisible, unbilled to any record, and impossible
+// to find again.
+//
+// A missing object is not an error. The store's Delete is idempotent, and rows
+// awaiting the storage backfill have no object at all; refusing to delete those
+// would strand exactly the rows most likely to need cleaning up.
+func (a *API) deleteAttachment(c *gin.Context) {
+	if a.files == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
+			"code":    "STORAGE_UNCONFIGURED",
+			"message": "object storage is not configured",
+		}})
+		return
+	}
+	id := strings.TrimSpace(c.Param("id"))
+	var key string
+	err := a.pool.QueryRow(c.Request.Context(), `
+		SELECT coalesce(storage_key,'') FROM public.attachments
+		 WHERE id = $1 AND owner_service = 'procurement'`, id).Scan(&key)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
+			"code": "NOT_FOUND", "message": "attachment not found"}})
+		return
+	}
+	if key != "" {
+		if err := a.files.Delete(key); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+				"code":    "STORAGE_ERROR",
+				"message": "could not remove the stored file: " + err.Error(),
+			}})
+			return
+		}
+	}
+	if _, err := a.pool.Exec(c.Request.Context(), `
+		DELETE FROM public.attachments
+		 WHERE id = $1 AND owner_service = 'procurement'`, id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+			"code": "DB_ERROR", "message": err.Error()}})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 // principalEmail returns the authenticated caller's email, or "" when the route
 // is reached without one. It is recorded for provenance only, so an empty value
 // is not an error.
@@ -187,6 +244,7 @@ func principalEmail(c *gin.Context) string {
 type presignPutter interface {
 	PresignPut(key string, expiry time.Duration) string
 	PresignGet(key string, expiry time.Duration) string
+	Delete(key string) error
 }
 
 var _ presignPutter = (*objectstore.S3Store)(nil)

@@ -50,6 +50,10 @@ func (a *API) postRfqQuote(c *gin.Context) {
 	if mapProcurementErr(c, err) {
 		return
 	}
+	// Recording a quote writes an audit entry, and audit entries are part of the
+	// cached seed payload - so without this the audit trail lags a quote by the
+	// cache TTL.
+	a.InvalidateSeedCache(c.Request.Context())
 	c.JSON(http.StatusCreated, row)
 }
 

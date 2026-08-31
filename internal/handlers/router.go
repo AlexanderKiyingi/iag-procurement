@@ -110,6 +110,12 @@ func (a *API) Mount(r *gin.Engine) {
 			sec.POST("/attachments", a.postAttachment)
 			sec.GET("/attachments", a.listAttachments)
 			sec.GET("/attachments/:id/url", a.getAttachmentURL)
+			// Delete sits behind the same authentication as create rather than
+			// a permission of its own. A new permission code would fail closed
+			// on every existing deployment until someone granted it, which for
+			// a verb whose siblings are ungated would read as a broken feature
+			// rather than a policy.
+			sec.DELETE("/attachments/:id", a.deleteAttachment)
 
 			data := sec.Group("")
 			data.Use(middleware.RequirePermission(rbac.ViewSeed))
@@ -520,6 +526,14 @@ func (a *API) listPayments(c *gin.Context) {
 }
 
 func (a *API) listAudit(c *gin.Context) {
+	if limit, offset, q, ok := parsePage(c); ok && a.procurement != nil {
+		rows, err := a.procurement.ListAudit(c.Request.Context(), limit, offset, q)
+		if mapProcurementErr(c, err) {
+			return
+		}
+		c.JSON(http.StatusOK, rows)
+		return
+	}
 	d, ok := a.loadCached(c)
 	if !ok {
 		return

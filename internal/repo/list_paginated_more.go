@@ -211,3 +211,39 @@ func (p *Procurement) ListPayments(ctx context.Context, limit, offset int, q str
 	}
 	return out, rows.Err()
 }
+
+// ListAudit returns a filtered, paged slice of audit entries, newest first
+// (q matches username, action, target or detail).
+//
+// Ordered by id DESC rather than ascending like the collections above: an audit
+// trail is read from the most recent entry, so page one has to be the newest
+// rows. The cached fallback returns them oldest-first, which meant the first
+// page a reader saw was the oldest history in the system.
+func (p *Procurement) ListAudit(ctx context.Context, limit, offset int, q string) ([]models.AuditEntry, error) {
+	args, sp, lp, op := pageArgs(q, limit, offset)
+	where := ""
+	if sp != "" {
+		where = "WHERE username ILIKE " + sp + " OR action ILIKE " + sp + " OR target ILIKE " + sp +
+			" OR detail ILIKE " + sp + " "
+	}
+	rows, err := p.pool.Query(ctx, `
+		SELECT id, ts, username, action, target, detail
+		FROM audit_entries `+where+`ORDER BY id DESC LIMIT `+lp+` OFFSET `+op, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.AuditEntry{}
+	for rows.Next() {
+		var e models.AuditEntry
+		var ts *time.Time
+		if err := rows.Scan(&e.ID, &ts, &e.User, &e.Action, &e.Target, &e.Detail); err != nil {
+			return nil, err
+		}
+		if ts != nil {
+			e.Timestamp = ts.UTC().Format(time.RFC3339)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}

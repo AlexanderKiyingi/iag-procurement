@@ -116,6 +116,11 @@ func (a *API) approveInvoice(c *gin.Context) {
 	// notified nobody: the AP desk had to poll the list to discover anything
 	// had been approved. Addressed to the audience so an administrator decides
 	// who sits on that desk without a redeploy.
+	// Approval moves the invoice's status and writes an audit entry, both of
+	// which sit in the cached seed payload. Every other write handler drops
+	// that cache; this one did not, so an approved invoice still read as
+	// unapproved to any caller that had not opted into paging.
+	a.InvalidateSeedCache(c.Request.Context())
 	a.notifyInvoiceApprovedAsync(c, row)
 	c.JSON(http.StatusOK, row)
 }
