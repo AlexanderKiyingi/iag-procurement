@@ -215,8 +215,12 @@ func (p *Publisher) DispatchOutbox(ctx context.Context, row outbox.Row) error {
 	if !p.Enabled() {
 		return nil
 	}
+	// No Topic here. p.writer is constructed with Topic: TopicCommercial
+	// (publisher.go), and kafka-go rejects a Message that sets Topic when the
+	// Writer already carries one - "Topic must not be specified for both Writer
+	// and Message". That error is returned before anything reaches the broker,
+	// so every publish failed while the connection itself was fine.
 	return p.writer.WriteMessages(ctx, kafka.Message{
-		Topic: TopicCommercial,
 		Key:   []byte(row.EventKey),
 		Value: row.Payload,
 		Headers: []kafka.Header{
