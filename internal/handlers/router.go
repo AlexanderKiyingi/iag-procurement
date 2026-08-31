@@ -365,7 +365,23 @@ func (a *API) listItems(c *gin.Context) {
 	c.JSON(http.StatusOK, d.Items)
 }
 
+// Budgets, RFQs, GRNs, contracts and payments answer from the database whenever
+// the caller pages, like every other list route. They previously had no paged
+// path at all: the ?limit/&offset an adapter sent was parsed and then ignored,
+// and the response always came from the shared Seed.Load() snapshot. That made
+// a single unreadable column in one table (items.attrs) fatal to all of them,
+// and made every write invisible until the snapshot's TTL lapsed.
+//
+// The unpaged fallback stays for callers that predate paging.
 func (a *API) listBudgets(c *gin.Context) {
+	if limit, offset, q, ok := parsePage(c); ok && a.procurement != nil {
+		rows, err := a.procurement.ListBudgets(c.Request.Context(), limit, offset, q)
+		if mapProcurementErr(c, err) {
+			return
+		}
+		c.JSON(http.StatusOK, rows)
+		return
+	}
 	d, ok := a.loadCached(c)
 	if !ok {
 		return
@@ -408,6 +424,14 @@ func (a *API) getRequisitionByOrigin(c *gin.Context) {
 }
 
 func (a *API) listRfqs(c *gin.Context) {
+	if limit, offset, q, ok := parsePage(c); ok && a.procurement != nil {
+		rows, err := a.procurement.ListRfqs(c.Request.Context(), limit, offset, q)
+		if mapProcurementErr(c, err) {
+			return
+		}
+		c.JSON(http.StatusOK, rows)
+		return
+	}
 	d, ok := a.loadCached(c)
 	if !ok {
 		return
@@ -432,6 +456,14 @@ func (a *API) listPOs(c *gin.Context) {
 }
 
 func (a *API) listGrns(c *gin.Context) {
+	if limit, offset, q, ok := parsePage(c); ok && a.procurement != nil {
+		rows, err := a.procurement.ListGrns(c.Request.Context(), limit, offset, q)
+		if mapProcurementErr(c, err) {
+			return
+		}
+		c.JSON(http.StatusOK, rows)
+		return
+	}
 	d, ok := a.loadCached(c)
 	if !ok {
 		return
@@ -456,6 +488,14 @@ func (a *API) listInvoices(c *gin.Context) {
 }
 
 func (a *API) listContracts(c *gin.Context) {
+	if limit, offset, q, ok := parsePage(c); ok && a.procurement != nil {
+		rows, err := a.procurement.ListContracts(c.Request.Context(), limit, offset, q)
+		if mapProcurementErr(c, err) {
+			return
+		}
+		c.JSON(http.StatusOK, rows)
+		return
+	}
 	d, ok := a.loadCached(c)
 	if !ok {
 		return
@@ -464,6 +504,14 @@ func (a *API) listContracts(c *gin.Context) {
 }
 
 func (a *API) listPayments(c *gin.Context) {
+	if limit, offset, q, ok := parsePage(c); ok && a.procurement != nil {
+		rows, err := a.procurement.ListPayments(c.Request.Context(), limit, offset, q)
+		if mapProcurementErr(c, err) {
+			return
+		}
+		c.JSON(http.StatusOK, rows)
+		return
+	}
 	d, ok := a.loadCached(c)
 	if !ok {
 		return
