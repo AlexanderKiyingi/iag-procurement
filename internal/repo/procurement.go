@@ -52,7 +52,15 @@ func NewProcurement(pool *pgxpool.Pool) *Procurement {
 	return &Procurement{pool: pool}
 }
 
-func newProcurementID(prefix string) string {
+// newDocNo builds the human-facing number for a document: the number a person
+// quotes in an email or writes on a delivery note.
+//
+// It used to be the primary key, which is why it was called newProcurementID.
+// Migration 027 retyped every id column to UUID and every insert that carried
+// one of these started failing with "invalid input syntax for type uuid" —
+// migration 031 moved the number to its own doc_no column and left the key to
+// the column's own DEFAULT gen_random_uuid().
+func newDocNo(prefix string) string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
 	return fmt.Sprintf("%s-%s", prefix, hex.EncodeToString(b[:]))
@@ -69,7 +77,7 @@ func (p *Procurement) CreateRequisition(ctx context.Context, title, dept, reques
 	if status == "" {
 		status = "Pending Approval"
 	}
-	id := newProcurementID("PR-2026")
+	docNo := newDocNo("PR-2026")
 	now := time.Now().UTC()
 	createdDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
@@ -79,11 +87,12 @@ func (p *Procurement) CreateRequisition(ctx context.Context, title, dept, reques
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO requisitions (id, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-		id, title, dept, requester, priority, status, createdDay, neededBy, total, currency, budgetID,
-	); err != nil {
+	var id string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO requisitions (doc_no, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+		docNo, title, dept, requester, priority, status, createdDay, neededBy, total, currency, budgetID,
+	).Scan(&id); err != nil {
 		return nil, err
 	}
 
@@ -137,7 +146,7 @@ func (p *Procurement) CreatePurchaseOrder(ctx context.Context, vendorID, title, 
 		total += ln.Qty * ln.Price
 	}
 
-	id := newProcurementID("PO-2026")
+	docNo := newDocNo("PO-2026")
 	now := time.Now().UTC()
 	createdDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	status := p.poInitialStatus(total)
@@ -148,11 +157,12 @@ func (p *Procurement) CreatePurchaseOrder(ctx context.Context, vendorID, title, 
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO purchase_orders (id, vendor_id, title, total, currency, status, created_at, expected_date, budget_id, requisition_id, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),$11)`,
-		id, vendorID, title, total, currency, status, createdDay, expectedDate, budgetID, strings.TrimSpace(requisitionID), auditUser,
-	); err != nil {
+	var id string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO purchase_orders (doc_no, vendor_id, title, total, currency, status, created_at, expected_date, budget_id, requisition_id, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,'')::uuid,$11) RETURNING id`,
+		docNo, vendorID, title, total, currency, status, createdDay, expectedDate, budgetID, strings.TrimSpace(requisitionID), auditUser,
+	).Scan(&id); err != nil {
 		return nil, err
 	}
 

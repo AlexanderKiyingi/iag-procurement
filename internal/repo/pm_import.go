@@ -50,7 +50,7 @@ func (p *Procurement) ImportPMRequisition(
 		budgetID = "BDG-2026-UT"
 	}
 
-	id := newProcurementID("PR-2026")
+	docNo := newDocNo("PR-2026")
 	now := time.Now().UTC()
 	createdDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
@@ -67,12 +67,13 @@ func (p *Procurement) ImportPMRequisition(
 	} else {
 		pmOwnerArg = pmOwner
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO requisitions (id, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id, pm_requisition_id, pm_workspace_owner, payee, justification)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,$10,$11,$12,$13,$14)`,
-		id, title, dept, requester, priority, status, createdDay, total, currency, budgetID, pmID, pmOwnerArg,
+	var id string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO requisitions (doc_no, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id, pm_requisition_id, pm_workspace_owner, payee, justification)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+		docNo, title, dept, requester, priority, status, createdDay, total, currency, budgetID, pmID, pmOwnerArg,
 		strings.TrimSpace(payee), strings.TrimSpace(justification),
-	); err != nil {
+	).Scan(&id); err != nil {
 		return nil, err
 	}
 

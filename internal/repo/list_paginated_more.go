@@ -189,7 +189,7 @@ func (p *Procurement) ListPayments(ctx context.Context, limit, offset int, q str
 	where := ""
 	if sp != "" {
 		where = "WHERE id ILIKE " + sp + " OR COALESCE(reference,'') ILIKE " + sp + " OR vendor_id ILIKE " + sp +
-			" OR COALESCE(invoice_id,'') ILIKE " + sp + " OR status ILIKE " + sp + " "
+			" OR COALESCE(invoice_id::text,'') ILIKE " + sp + " OR status ILIKE " + sp + " "
 	}
 	rows, err := p.pool.Query(ctx, `
 		SELECT id, invoice_id, vendor_id, amount, currency, pay_date, method, reference, status, initiated_by

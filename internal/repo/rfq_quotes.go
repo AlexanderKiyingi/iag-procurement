@@ -42,13 +42,15 @@ func (p *Procurement) CreateRfqQuote(ctx context.Context, rfqID, vendorID string
 		return nil, fmt.Errorf("%w: RFQ %s is %s; quotes can only be added while open", ErrInvalidArgument, rfqID, rfqStatus)
 	}
 
-	id := newProcurementID("QT")
+	// No doc_no: a quote is identified by its RFQ, supplier and amount, never by
+	// a number anyone quotes back.
 	now := time.Now().UTC()
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO rfq_quotes (id, rfq_id, vendor_id, amount, currency, notes, created_at, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		id, rfqID, vendorID, amount, currency, strings.TrimSpace(notes), now, auditUser,
-	); err != nil {
+	var id string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO rfq_quotes (rfq_id, vendor_id, amount, currency, notes, created_at, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+		rfqID, vendorID, amount, currency, strings.TrimSpace(notes), now, auditUser,
+	).Scan(&id); err != nil {
 		return nil, err
 	}
 	if auditUser == "" {
@@ -164,7 +166,7 @@ func (p *Procurement) AwardRfq(ctx context.Context, rfqID, quoteID, vendorID, bu
 		}
 	}
 
-	poID := newProcurementID("PO-2026")
+	poDocNo := newDocNo("PO-2026")
 	now := time.Now().UTC()
 	createdDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	status := p.poInitialStatus(qAmount)
@@ -173,11 +175,12 @@ func (p *Procurement) AwardRfq(ctx context.Context, rfqID, quoteID, vendorID, bu
 		title = "Awarded from " + rfqID
 	}
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO purchase_orders (id, vendor_id, title, total, currency, status, created_at, expected_date, budget_id, requisition_id, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,$11)`,
-		poID, qVendor, title, qAmount, qCurrency, status, createdDay, expectedDate, budgetID, reqID, auditUser,
-	); err != nil {
+	var poID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO purchase_orders (doc_no, vendor_id, title, total, currency, status, created_at, expected_date, budget_id, requisition_id, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::uuid,$10,$11) RETURNING id`,
+		poDocNo, qVendor, title, qAmount, qCurrency, status, createdDay, expectedDate, budgetID, reqID, auditUser,
+	).Scan(&poID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE vendors SET open_pos = open_pos + 1 WHERE id = $1`, qVendor); err != nil {

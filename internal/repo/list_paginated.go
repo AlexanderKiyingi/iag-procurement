@@ -139,7 +139,7 @@ func (p *Procurement) ListPurchaseOrders(ctx context.Context, limit, offset int,
 		where = "WHERE id ILIKE " + sp + " OR title ILIKE " + sp + " OR vendor_id ILIKE " + sp + " OR status ILIKE " + sp + " "
 	}
 	rows, err := p.pool.Query(ctx, `
-		SELECT id, vendor_id, title, total, currency, status, created_at, expected_date, COALESCE(budget_id, '')
+		SELECT id, vendor_id, title, total, currency, status, created_at, expected_date, COALESCE(budget_id::text, '')
 		FROM purchase_orders `+where+`ORDER BY id LIMIT `+lp+` OFFSET `+op, args...)
 	if err != nil {
 		return nil, err
@@ -205,7 +205,7 @@ func (p *Procurement) GetPurchaseOrder(ctx context.Context, id string) (*models.
 	var po models.Po
 	var created, expected *time.Time
 	err := p.pool.QueryRow(ctx, `
-		SELECT id, vendor_id, title, total, currency, status, payment_status, created_at, expected_date, COALESCE(budget_id, '')
+		SELECT id, vendor_id, title, total, currency, status, payment_status, created_at, expected_date, COALESCE(budget_id::text, '')
 		FROM purchase_orders WHERE id = $1`, id,
 	).Scan(&po.ID, &po.VendorID, &po.Title, &po.Total, &po.Currency, &po.Status, &po.PaymentStatus,
 		&created, &expected, &po.BudgetID)

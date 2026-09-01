@@ -56,17 +56,16 @@ func (p *Procurement) RecordVendorPayment(ctx context.Context, invoiceRef, payme
 		currency = "USD"
 	}
 
-	id := newProcurementID("PMT")
+	// payments.reference is the human-facing key and carries the finance
+	// document ref; the row key is the column's own gen_random_uuid().
 	if paymentRef == "" {
-		paymentRef = id
+		paymentRef = newDocNo("PMT")
 	}
-	// Insert the disbursement; ON CONFLICT on the unique reference index makes a
-	// redelivered settlement a no-op.
 	tag, err := tx.Exec(ctx, `
-		INSERT INTO payments (id, invoice_id, vendor_id, amount, currency, pay_date, method, reference, status, initiated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'Cleared','finance')
+		INSERT INTO payments (invoice_id, vendor_id, amount, currency, pay_date, method, reference, status, initiated_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,'Cleared','finance')
 		ON CONFLICT (reference) WHERE reference <> '' DO NOTHING`,
-		id, invoiceID, vendorID, amount, currency, payDate, method, paymentRef,
+		invoiceID, vendorID, amount, currency, payDate, method, paymentRef,
 	)
 	if err != nil {
 		return err

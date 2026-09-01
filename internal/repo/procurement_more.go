@@ -56,7 +56,9 @@ func (p *Procurement) CreateVendor(ctx context.Context, name, logo, category, co
 	if status == "" {
 		status = "Active"
 	}
-	id := newProcurementID("V")
+	// No doc_no: "V-1a2b3c4d" was never a reference anyone used — a vendor is
+	// known by its name, and the key is the column's own gen_random_uuid().
+	//
 	// Mint the shared party_id up front so the same canonical key is persisted
 	// locally and carried on the party.vendor.upserted event to the mesh.
 	partyID := uuid.NewString()
@@ -66,11 +68,12 @@ func (p *Procurement) CreateVendor(ctx context.Context, name, logo, category, co
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO vendors (id, name, logo, category, contact, email, phone, country, terms, rating, status, total_spend, open_pos, party_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::uuid)`,
-		id, name, logo, category, contact, email, phone, country, terms, rating, status, 0, 0, partyID,
-	); err != nil {
+	var id string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO vendors (name, logo, category, contact, email, phone, country, terms, rating, status, total_spend, open_pos, party_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::uuid) RETURNING id`,
+		name, logo, category, contact, email, phone, country, terms, rating, status, 0, 0, partyID,
+	).Scan(&id); err != nil {
 		return nil, err
 	}
 	if auditUser == "" {
@@ -184,7 +187,8 @@ func (p *Procurement) CreateBudget(ctx context.Context, code, period string, all
 	if code == "" {
 		return nil, fmt.Errorf("%w: code is required", ErrInvalidArgument)
 	}
-	id := newProcurementID("BDG")
+	// budgets.code already carries the human-facing reference, so there is no
+	// doc_no here; the key is the column's own gen_random_uuid().
 	committed, spent := 0.0, 0.0
 	remaining := allocated - committed - spent
 
@@ -194,11 +198,12 @@ func (p *Procurement) CreateBudget(ctx context.Context, code, period string, all
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO budgets (id, code, period, allocated, committed, spent, remaining, dept)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		id, code, period, allocated, committed, spent, remaining, dept,
-	); err != nil {
+	var id string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO budgets (code, period, allocated, committed, spent, remaining, dept)
+		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+		code, period, allocated, committed, spent, remaining, dept,
+	).Scan(&id); err != nil {
 		return nil, err
 	}
 	if auditUser == "" {
@@ -229,7 +234,7 @@ func (p *Procurement) CreateRfq(ctx context.Context, title string, dueDate *time
 	if invited == nil {
 		invited = []string{}
 	}
-	id := newProcurementID("RFQ")
+	docNo := newDocNo("RFQ")
 	status := "Open"
 	now := time.Now().UTC()
 	createdDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
@@ -240,11 +245,12 @@ func (p *Procurement) CreateRfq(ctx context.Context, title string, dueDate *time
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO rfqs (id, title, status, due_date, created_at, winner_vendor_id, invited_vendor_ids, requisition_id)
-		VALUES ($1,$2,$3,$4,$5,NULL,COALESCE($6::text[], '{}'),NULLIF($7,''))`,
-		id, title, status, dueDate, createdDay, invited, strings.TrimSpace(requisitionID),
-	); err != nil {
+	var id string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO rfqs (doc_no, title, status, due_date, created_at, winner_vendor_id, invited_vendor_ids, requisition_id)
+		VALUES ($1,$2,$3,$4,$5,NULL,COALESCE($6::uuid[], '{}'::uuid[]),NULLIF($7,'')::uuid) RETURNING id`,
+		docNo, title, status, dueDate, createdDay, invited, strings.TrimSpace(requisitionID),
+	).Scan(&id); err != nil {
 		return nil, err
 	}
 	if auditUser == "" {
@@ -293,7 +299,7 @@ func (p *Procurement) CreateGrn(ctx context.Context, vendorID string, poID *stri
 		d := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 		rd = &d
 	}
-	id := newProcurementID("GRN")
+	docNo := newDocNo("GRN")
 
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
@@ -307,11 +313,12 @@ func (p *Procurement) CreateGrn(ctx context.Context, vendorID string, poID *stri
 		}
 	}
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO grns (id, po_id, vendor_id, received_date, received_by, status)
-		VALUES ($1,$2,$3,$4,$5,$6)`,
-		id, poID, vendorID, rd, receivedBy, status,
-	); err != nil {
+	var id string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO grns (doc_no, po_id, vendor_id, received_date, received_by, status)
+		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+		docNo, poID, vendorID, rd, receivedBy, status,
+	).Scan(&id); err != nil {
 		return nil, err
 	}
 	for _, ln := range lines {
@@ -370,12 +377,13 @@ func (p *Procurement) CreateInvoice(ctx context.Context, vendorID string, poID *
 		d := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 		idate = &d
 	}
-	id := newProcurementID("INV")
-
-	var invNo interface{}
+	// invoices.invoice_no is already the human-facing reference, so there is no
+	// doc_no here. A caller that supplies none gets a generated number rather
+	// than a NULL: an AP document with no number on it is not much use, and the
+	// id is a uuid nobody would quote.
+	var invNo interface{} = newDocNo("INV")
 	if invoiceNo != nil && strings.TrimSpace(*invoiceNo) != "" {
-		s := strings.TrimSpace(*invoiceNo)
-		invNo = s
+		invNo = strings.TrimSpace(*invoiceNo)
 	}
 
 	tx, err := p.pool.Begin(ctx)
@@ -393,11 +401,12 @@ func (p *Procurement) CreateInvoice(ctx context.Context, vendorID string, poID *
 		return nil, err
 	}
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO invoices (id, invoice_no, vendor_id, po_id, grn_id, amount, currency, status, match_status, invoice_date)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		id, invNo, vendorID, poID, grnID, amount, currency, status, matchStatus, idate,
-	); err != nil {
+	var id string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO invoices (invoice_no, vendor_id, po_id, grn_id, amount, currency, status, match_status, invoice_date)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+		invNo, vendorID, poID, grnID, amount, currency, status, matchStatus, idate,
+	).Scan(&id); err != nil {
 		return nil, err
 	}
 	if auditUser == "" {
@@ -544,7 +553,7 @@ func (p *Procurement) CreateContract(ctx context.Context, vendorID, title string
 	if status == "" {
 		status = "Draft"
 	}
-	id := newProcurementID("CNT")
+	docNo := newDocNo("CNT")
 
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
@@ -552,11 +561,12 @@ func (p *Procurement) CreateContract(ctx context.Context, vendorID, title string
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO contracts (id, vendor_id, title, start_date, end_date, value, currency, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		id, vendorID, title, startDate, endDate, value, currency, status,
-	); err != nil {
+	var id string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO contracts (doc_no, vendor_id, title, start_date, end_date, value, currency, status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+		docNo, vendorID, title, startDate, endDate, value, currency, status,
+	).Scan(&id); err != nil {
 		return nil, err
 	}
 	if auditUser == "" {

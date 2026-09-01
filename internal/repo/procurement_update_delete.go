@@ -293,7 +293,7 @@ func (p *Procurement) DeleteRequisition(ctx context.Context, id string, auditUse
 	var total float64
 	var budgetCommitted, preReleased bool
 	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(budget_id, ''), total, budget_committed, pre_released
+		SELECT COALESCE(budget_id::text, ''), total, budget_committed, pre_released
 		FROM requisitions WHERE id = $1`, id,
 	).Scan(&budgetID, &total, &budgetCommitted, &preReleased); err != nil {
 		if err == pgx.ErrNoRows {

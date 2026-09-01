@@ -140,7 +140,7 @@ func (p *Procurement) applyPOEncumbrance(ctx context.Context, tx pgx.Tx, poID, b
 		var reqTotal float64
 		var reqPre, reqReleased bool
 		err := tx.QueryRow(ctx, `
-			SELECT COALESCE(budget_id, ''), total, budget_committed, pre_released
+			SELECT COALESCE(budget_id::text, ''), total, budget_committed, pre_released
 			FROM requisitions WHERE id = $1 FOR UPDATE`, rid,
 		).Scan(&reqBudget, &reqTotal, &reqPre, &reqReleased)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -282,7 +282,7 @@ func (p *Procurement) recognizePOSpendOnReceipt(ctx context.Context, tx pgx.Tx, 
 		var budgetID string
 		var total, spentRecognized float64
 		err := tx.QueryRow(ctx, `
-			SELECT COALESCE(budget_id, ''), total, spent_recognized
+			SELECT COALESCE(budget_id::text, ''), total, spent_recognized
 			FROM purchase_orders WHERE id = $1 FOR UPDATE`, poID,
 		).Scan(&budgetID, &total, &spentRecognized)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -336,7 +336,7 @@ func (p *Procurement) recognizePOSpendOnReceipt(ctx context.Context, tx pgx.Tx, 
 		amt := recognizedAmount
 		if poID != "" && amt > 0 {
 			var budgetID string
-			err := tx.QueryRow(ctx, `SELECT COALESCE(budget_id, '') FROM purchase_orders WHERE id = $1 FOR UPDATE`, poID).Scan(&budgetID)
+			err := tx.QueryRow(ctx, `SELECT COALESCE(budget_id::text, '') FROM purchase_orders WHERE id = $1 FOR UPDATE`, poID).Scan(&budgetID)
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return err
 			}

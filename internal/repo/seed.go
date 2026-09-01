@@ -111,7 +111,7 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 
 	{
 		rows, err := s.pool.Query(ctx, `
-		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, COALESCE(budget_id, '')
+		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, COALESCE(budget_id::text, '')
 		FROM requisitions ORDER BY id`)
 		if err != nil {
 			return nil, fmt.Errorf("requisitions: %w", err)
@@ -185,7 +185,7 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 
 	{
 		rows, err := s.pool.Query(ctx, `
-		SELECT id, vendor_id, title, total, currency, status, payment_status, created_at, expected_date, COALESCE(budget_id, '')
+		SELECT id, vendor_id, title, total, currency, status, payment_status, created_at, expected_date, COALESCE(budget_id::text, '')
 		FROM purchase_orders ORDER BY id`)
 		if err != nil {
 			return nil, fmt.Errorf("purchase_orders: %w", err)

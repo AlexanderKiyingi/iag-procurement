@@ -279,7 +279,7 @@ func (p *Procurement) UpdateRfq(
 			status = COALESCE($3, status),
 			due_date = CASE WHEN $4::date IS NULL THEN due_date ELSE $4::date END,
 			winner_vendor_id = CASE WHEN $5::text IS NULL THEN winner_vendor_id ELSE $5::text END,
-			invited_vendor_ids = CASE WHEN $6::text[] IS NULL THEN invited_vendor_ids ELSE $6::text[] END
+			invited_vendor_ids = CASE WHEN $6::uuid[] IS NULL THEN invited_vendor_ids ELSE $6::uuid[] END
 		WHERE id = $1`,
 		id, title, status, dueArg, winnerArg, invitedArg,
 	)
@@ -647,7 +647,7 @@ func (p *Procurement) UpdatePurchaseOrder(
 	var curTotal, spentRecognized float64
 	var budgetCommitted bool
 	if err := tx.QueryRow(ctx, `
-		SELECT vendor_id, COALESCE(created_by, ''), status, COALESCE(budget_id, ''), total, spent_recognized, budget_committed
+		SELECT vendor_id, COALESCE(created_by, ''), status, COALESCE(budget_id::text, ''), total, spent_recognized, budget_committed
 		FROM purchase_orders WHERE id = $1 FOR UPDATE`, id,
 	).Scan(&curVendor, &createdBy, &curStatus, &poBudgetID, &curTotal, &spentRecognized, &budgetCommitted); err != nil {
 		if err == pgx.ErrNoRows {
@@ -831,7 +831,7 @@ func (p *Procurement) DeletePurchaseOrder(ctx context.Context, id string, auditU
 	var poTotal, spentRecognized float64
 	var budgetCommitted bool
 	if err := tx.QueryRow(ctx, `
-		SELECT vendor_id, COALESCE(budget_id, ''), total, spent_recognized, budget_committed
+		SELECT vendor_id, COALESCE(budget_id::text, ''), total, spent_recognized, budget_committed
 		FROM purchase_orders WHERE id = $1 FOR UPDATE`, id,
 	).Scan(&vendorID, &poBudgetID, &poTotal, &spentRecognized, &budgetCommitted); err != nil {
 		if err == pgx.ErrNoRows {

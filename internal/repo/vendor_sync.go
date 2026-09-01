@@ -55,7 +55,7 @@ func (p *Procurement) UpsertVendorByParty(ctx context.Context, partyID, code, na
 			phone = CASE WHEN $5 <> '' THEN $5 ELSE phone END,
 			country = CASE WHEN $6 <> '' THEN $6 ELSE country END,
 			status = CASE WHEN $7 <> '' THEN $7 ELSE status END
-		WHERE party_id = $1::uuid OR scm_business_id = $2 OR id = $2`,
+		WHERE party_id = $1::uuid OR scm_business_id = $2 OR id::text = $2`,
 		partyID, strings.TrimSpace(code), name, strings.TrimSpace(email),
 		strings.TrimSpace(phone), strings.TrimSpace(country), strings.TrimSpace(status))
 	if err != nil {
@@ -65,21 +65,24 @@ func (p *Procurement) UpsertVendorByParty(ctx context.Context, partyID, code, na
 		return nil
 	}
 
-	// No local row yet — insert a synced vendor. Use a fresh procurement id so
-	// the local PK stays in the "V-..." shape; scm_business_id records the source
-	// natural key when present.
-	id := newProcurementID("V")
+	// No local row yet — insert a synced vendor. The key is the column's own
+	// gen_random_uuid(); scm_business_id records the source natural key when
+	// present.
+	//
+	// The old ON CONFLICT (id) clause was already dead: it guarded against a
+	// collision on an id this function had just minted at random, which cannot
+	// happen. The real idempotency is the UPDATE above, which returns early when
+	// it matches a row.
 	scmBiz := strings.TrimSpace(code)
 	_, err = p.pool.Exec(ctx, `
 		INSERT INTO vendors (
-			id, name, logo, category, contact, email, phone, country, terms,
+			name, logo, category, contact, email, phone, country, terms,
 			rating, status, total_spend, open_pos, party_id, scm_business_id
 		) VALUES (
-			$1, $2, '', $3, '', $4, $5, $6, '',
-			0, $7, 0, 0, $8::uuid, NULLIF($9,'')
-		)
-		ON CONFLICT (id) DO NOTHING`,
-		id, name, category, strings.TrimSpace(email), strings.TrimSpace(phone),
+			$1, '', $2, '', $3, $4, $5, '',
+			0, $6, 0, 0, $7::uuid, NULLIF($8,'')
+		)`,
+		name, category, strings.TrimSpace(email), strings.TrimSpace(phone),
 		strings.TrimSpace(country), strings.TrimSpace(status), partyID, scmBiz)
 	return err
 }

@@ -190,9 +190,9 @@ func (p *Procurement) actorAlreadyApproved(ctx context.Context, tx pgx.Tx, reqID
 
 func (p *Procurement) insertApprovalRow(ctx context.Context, tx pgx.Tx, reqID string, tier int, actor, decision, note string) error {
 	_, err := tx.Exec(ctx, `
-		INSERT INTO requisition_approvals (id, requisition_id, tier, actor, decision, note)
-		VALUES ($1,$2,$3,$4,$5,$6)`,
-		newProcurementID("APPR"), reqID, tier, actor, decision, note,
+		INSERT INTO requisition_approvals (requisition_id, tier, actor, decision, note)
+		VALUES ($1,$2,$3,$4,$5)`,
+		reqID, tier, actor, decision, note,
 	)
 	return err
 }

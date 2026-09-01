@@ -58,7 +58,7 @@ func (p *Procurement) ImportProcurementRequest(
 	}
 	status := "Pending Approval"
 
-	id := newProcurementID("PR-2026")
+	docNo := newDocNo("PR-2026")
 	now := time.Now().UTC()
 	createdDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
@@ -68,12 +68,13 @@ func (p *Procurement) ImportProcurementRequest(
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO requisitions (id, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id, justification, origin_system, origin_ref)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,NULLIF($10,''),$11,$12,$13)`,
-		id, title, strings.TrimSpace(dept), strings.TrimSpace(requester), priority, status, createdDay,
+	var id string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO requisitions (doc_no, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id, justification, origin_system, origin_ref)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,$8,$9,NULLIF($10,'')::uuid,$11,$12,$13) RETURNING id`,
+		docNo, title, strings.TrimSpace(dept), strings.TrimSpace(requester), priority, status, createdDay,
 		total, currency, strings.TrimSpace(budgetID), strings.TrimSpace(justification), originSystem, originRef,
-	); err != nil {
+	).Scan(&id); err != nil {
 		// Concurrent duplicate: the unique (origin_system, origin_ref) index fired.
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -125,7 +126,7 @@ func (p *Procurement) GetRequisitionByOrigin(ctx context.Context, originSystem, 
 		created, needed *time.Time
 	)
 	err := p.pool.QueryRow(ctx, `
-		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, COALESCE(budget_id, '')
+		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, COALESCE(budget_id::text, '')
 		FROM requisitions WHERE origin_system = $1 AND origin_ref = $2`,
 		originSystem, originRef,
 	).Scan(&r.ID, &r.Title, &r.Dept, &r.Requester, &r.Priority, &r.Status,
