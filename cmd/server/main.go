@@ -189,15 +189,32 @@ func main() {
 		Enabled: cfg.EventBusEnabled && len(cfg.KafkaBrokers) > 0,
 	})
 	defer func() { _ = publisher.Close() }()
+	// Transactional outbox: requisition approval/rejection, invoice-received,
+	// GRN-posted and vendor-upserted events are enqueued in their writing tx by
+	// the repo and drained to Kafka by the publisher below, so a broker outage
+	// delays delivery instead of dropping events.
+	//
+	// The store is wired unconditionally, and only the *drain* is gated on a
+	// broker. Both used to sit behind the same condition, which inverted the
+	// design: with no broker configured, enqueueRequisitionOutcome and
+	// emitVendorUpserted found a nil outbox and silently returned nil, so the
+	// events were never recorded at all. That dropped precisely the events the
+	// outbox exists to survive — and it did so without a log line, because a
+	// no-op is not an error.
+	//
+	// Recording is cheap and safe on its own: one row in a transaction that was
+	// already committing. With no relay running the rows accumulate as a
+	// backlog, and the publisher drains them when a broker is configured. There
+	// is no pruning on this table, so a long-lived deployment with the bus off
+	// will grow it — a backlog an operator can see and replay, which is the
+	// better failure.
+	outboxStore := outbox.NewStore(pool)
+	procurementRepo.SetOutbox(outboxStore)
 	if cfg.EventBusEnabled && len(cfg.KafkaBrokers) > 0 {
-		// Transactional outbox: requisition approval/rejection, invoice-received,
-		// and GRN-posted events are enqueued in their writing tx by the repo and
-		// drained to Kafka here, so a broker outage delays delivery instead of
-		// dropping events.
-		outboxStore := outbox.NewStore(pool)
-		procurementRepo.SetOutbox(outboxStore)
 		go outbox.NewPublisher(outboxStore, publisher).Run(workerCtx)
 		log.Printf("event bus: outbox publisher started")
+	} else {
+		log.Printf("event bus: no broker configured — events are recorded in the outbox and will be delivered once one is")
 	}
 	if cfg.EventBusEnabled && len(cfg.KafkaBrokers) > 0 {
 		commercialConsumer = consumer.NewCommercial(consumer.Config{
