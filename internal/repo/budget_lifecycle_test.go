@@ -65,8 +65,11 @@ func TestBudgetLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("requisition: %v", err)
 	}
-	approved := "approved"
-	if _, err := p.UpdateRequisition(ctx, req.ID, nil, nil, nil, &approved, nil, nil, nil, nil, approver); err != nil {
+	// Through the tier engine, not UpdateRequisition: a manual status move to
+	// approved is refused on purpose, so that the tiers are the only route in.
+	// This test predates that guard and was never re-run, because it is gated on
+	// TEST_DATABASE_URL and CI did not set it.
+	if _, _, err := p.ApproveRequisitionTier(ctx, req.ID, approver, func(string) bool { return true }, ""); err != nil {
 		t.Fatalf("approve requisition: %v", err)
 	}
 	if pre, c, s, _ := readB(); pre != 600 || c != 0 || s != 0 {
@@ -106,7 +109,7 @@ func TestBudgetLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("requisition2: %v", err)
 	}
-	if _, err := p.UpdateRequisition(ctx, req2.ID, nil, nil, nil, &approved, nil, nil, nil, nil, approver); err == nil {
+	if _, _, err := p.ApproveRequisitionTier(ctx, req2.ID, approver, func(string) bool { return true }, ""); err == nil {
 		t.Fatalf("expected over-budget approval to be rejected")
 	}
 
@@ -115,7 +118,7 @@ func TestBudgetLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("requisition3: %v", err)
 	}
-	if _, err := p.UpdateRequisition(ctx, req3.ID, nil, nil, nil, &approved, nil, nil, nil, nil, requester); err == nil {
+	if _, _, err := p.ApproveRequisitionTier(ctx, req3.ID, requester, func(string) bool { return true }, ""); err == nil {
 		t.Fatalf("expected self-approval to be rejected")
 	}
 
@@ -124,7 +127,7 @@ func TestBudgetLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("requisition4: %v", err)
 	}
-	if _, err := p.UpdateRequisition(ctx, req4.ID, nil, nil, nil, &approved, nil, nil, nil, nil, approver); err != nil {
+	if _, _, err := p.ApproveRequisitionTier(ctx, req4.ID, approver, func(string) bool { return true }, ""); err != nil {
 		t.Fatalf("approve requisition4: %v", err)
 	}
 	if pre, _, _, _ := readB(); pre != 200 {

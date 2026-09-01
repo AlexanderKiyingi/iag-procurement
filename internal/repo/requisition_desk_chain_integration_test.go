@@ -13,6 +13,7 @@ import (
 
 	"iag-procurement/backend/internal/db"
 	"iag-procurement/backend/internal/migrate"
+	"iag-procurement/backend/internal/outbox"
 )
 
 // Everything else about the desk chain is verified without a database: the
@@ -39,7 +40,13 @@ func deskTestPool(t *testing.T) (context.Context, *deskFixture) {
 	if err := migrate.Up(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	return ctx, &deskFixture{t: t, p: NewProcurement(pool), pool: pool}
+	// The outbox has to be wired or enqueueRequisitionOutcome no-ops, and the
+	// assertion below that the outcome event commits with the approval can
+	// never pass. It went unnoticed because these tests are gated on
+	// TEST_DATABASE_URL, which CI did not set.
+	proc := NewProcurement(pool)
+	proc.SetOutbox(outbox.NewStore(pool))
+	return ctx, &deskFixture{t: t, p: proc, pool: pool}
 }
 
 type deskFixture struct {

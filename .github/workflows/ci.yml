@@ -61,6 +61,20 @@ jobs:
         run: go test ./...
         env:
           DATABASE_URL: postgres://iag:iag_dev@localhost:5432/iag_platform?sslmode=disable&search_path=procurement
+          # The database-backed tests gate on TEST_DATABASE_URL, not DATABASE_URL.
+          # Nothing set it, so six files — every test that exercises a write
+          # against real Postgres — silently skipped on every run.
+          #
+          # What that cost: migration 027 retyped every id column to UUID while
+          # fifteen Create* paths still inserted PREFIX-<hex>. The whole write
+          # surface of the service was dead on any migrated database, and the
+          # suite stayed green for months, because the tests that insert were
+          # the ones not running. Two more tests had quietly gone stale behind
+          # the same gate.
+          #
+          # The job already provisions Postgres and creates the schema. This is
+          # the one line that makes it count.
+          TEST_DATABASE_URL: postgres://iag:iag_dev@localhost:5432/iag_platform?sslmode=disable&search_path=procurement
           REDIS_URL: redis://localhost:6379/0
 
   docker:
