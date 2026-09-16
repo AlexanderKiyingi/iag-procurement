@@ -226,6 +226,7 @@ func (p *Procurement) DeleteBudget(ctx context.Context, id string, auditUser str
 }
 
 // UpdateRfq supports replacing invited list. dueDate: if present and nil => clear. winnerVendorID: if non-nil and points to "" => clear.
+// requisitionID: if non-nil and points to "" => clear.
 func (p *Procurement) UpdateRfq(
 	ctx context.Context,
 	id string,
@@ -233,6 +234,7 @@ func (p *Procurement) UpdateRfq(
 	dueDate **time.Time,
 	winnerVendorID *string,
 	invitedVendorIDs *[]string,
+	requisitionID *string,
 	auditUser string,
 ) (*models.Rfq, error) {
 	id = strings.TrimSpace(id)
@@ -266,6 +268,11 @@ func (p *Procurement) UpdateRfq(
 	} else {
 		invitedArg = *invitedVendorIDs
 	}
+	var reqArg interface{}
+	if requisitionID != nil {
+		s := strings.TrimSpace(*requisitionID)
+		reqArg = s // empty clears (NULLIF below)
+	}
 
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
@@ -279,9 +286,10 @@ func (p *Procurement) UpdateRfq(
 			status = COALESCE($3, status),
 			due_date = CASE WHEN $4::date IS NULL THEN due_date ELSE $4::date END,
 			winner_vendor_id = CASE WHEN $5::text IS NULL THEN winner_vendor_id ELSE $5::text END,
-			invited_vendor_ids = CASE WHEN $6::uuid[] IS NULL THEN invited_vendor_ids ELSE $6::uuid[] END
+			invited_vendor_ids = CASE WHEN $6::uuid[] IS NULL THEN invited_vendor_ids ELSE $6::uuid[] END,
+			requisition_id = CASE WHEN $7::text IS NULL THEN requisition_id ELSE NULLIF($7::text, '')::uuid END
 		WHERE id = $1`,
-		id, title, status, dueArg, winnerArg, invitedArg,
+		id, title, status, dueArg, winnerArg, invitedArg, reqArg,
 	)
 	if err != nil {
 		return nil, err
@@ -302,9 +310,9 @@ func (p *Procurement) UpdateRfq(
 	var due, created *time.Time
 	var winner *string
 	if err := tx.QueryRow(ctx, `
-		SELECT id, title, status, due_date, created_at, winner_vendor_id, invited_vendor_ids
+		SELECT id, title, status, due_date, created_at, winner_vendor_id, invited_vendor_ids, COALESCE(requisition_id::text, '')
 		FROM rfqs WHERE id = $1`, id,
-	).Scan(&out.ID, &out.Title, &out.Status, &due, &created, &winner, &out.InvitedVendors); err != nil {
+	).Scan(&out.ID, &out.Title, &out.Status, &due, &created, &winner, &out.InvitedVendors, &out.RequisitionID); err != nil {
 		return nil, err
 	}
 	out.DueDate = ""
@@ -359,6 +367,7 @@ func (p *Procurement) UpdateContract(
 	startDate, endDate **time.Time,
 	value *float64,
 	currency, status *string,
+	committedVolume *float64,
 	auditUser string,
 ) (*models.Contract, error) {
 	id = strings.TrimSpace(id)
@@ -402,9 +411,10 @@ func (p *Procurement) UpdateContract(
 			end_date = CASE WHEN $5::date IS NULL THEN end_date ELSE $5::date END,
 			value = COALESCE($6, value),
 			currency = COALESCE($7, currency),
-			status = COALESCE($8, status)
+			status = COALESCE($8, status),
+			committed_volume = COALESCE($9, committed_volume)
 		WHERE id = $1`,
-		id, vendorID, title, sdArg, edArg, value, currency, status,
+		id, vendorID, title, sdArg, edArg, value, currency, status, committedVolume,
 	)
 	if err != nil {
 		return nil, err
@@ -424,9 +434,9 @@ func (p *Procurement) UpdateContract(
 	var out models.Contract
 	var sd, ed *time.Time
 	if err := tx.QueryRow(ctx, `
-		SELECT id, vendor_id, title, start_date, end_date, value, currency, status
+		SELECT id, vendor_id, title, start_date, end_date, value, currency, status, committed_volume
 		FROM contracts WHERE id = $1`, id,
-	).Scan(&out.ID, &out.VendorID, &out.Title, &sd, &ed, &out.Value, &out.Currency, &out.Status); err != nil {
+	).Scan(&out.ID, &out.VendorID, &out.Title, &sd, &ed, &out.Value, &out.Currency, &out.Status, &out.CommittedVolume); err != nil {
 		return nil, err
 	}
 	if sd != nil {
@@ -469,7 +479,9 @@ func (p *Procurement) DeleteContract(ctx context.Context, id string, auditUser s
 	return tx.Commit(ctx)
 }
 
-// UpdateInvoice supports clearing invoiceNo, poId, invoiceDate by passing pointers to "" (handlers do this).
+// UpdateInvoice supports clearing invoiceNo, poId, invoiceDate, dueDate by passing pointers to "" (handlers do this).
+// matchStatus is derived by the service on create/approve; the HTTP handler
+// always passes nil, and the parameter remains only for internal callers.
 func (p *Procurement) UpdateInvoice(
 	ctx context.Context,
 	id string,
@@ -477,6 +489,8 @@ func (p *Procurement) UpdateInvoice(
 	amount *float64,
 	currency, status, matchStatus *string,
 	invoiceDate **time.Time,
+	varianceResolution *string,
+	dueDate **time.Time,
 	auditUser string,
 ) (*models.Invoice, error) {
 	id = strings.TrimSpace(id)
@@ -513,6 +527,19 @@ func (p *Procurement) UpdateInvoice(
 	} else {
 		dateArg = **invoiceDate
 	}
+	var dueArg interface{}
+	if dueDate == nil {
+		dueArg = nil
+	} else if *dueDate == nil {
+		dueArg = (*time.Time)(nil)
+	} else {
+		dueArg = **dueDate
+	}
+	var resolutionArg *string
+	if varianceResolution != nil {
+		s := strings.TrimSpace(*varianceResolution)
+		resolutionArg = &s
+	}
 
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
@@ -529,9 +556,11 @@ func (p *Procurement) UpdateInvoice(
 			currency = COALESCE($6, currency),
 			status = COALESCE($7, status),
 			match_status = COALESCE($8, match_status),
-			invoice_date = CASE WHEN $9::date IS NULL THEN invoice_date ELSE $9::date END
+			invoice_date = CASE WHEN $9::date IS NULL THEN invoice_date ELSE $9::date END,
+			variance_resolution = COALESCE($10, variance_resolution),
+			due_date = CASE WHEN $11::date IS NULL THEN due_date ELSE $11::date END
 		WHERE id = $1`,
-		id, invNoArg, vendorID, poArg, amount, currency, status, matchStatus, dateArg,
+		id, invNoArg, vendorID, poArg, amount, currency, status, matchStatus, dateArg, resolutionArg, dueArg,
 	)
 	if err != nil {
 		return nil, err
@@ -550,19 +579,24 @@ func (p *Procurement) UpdateInvoice(
 
 	var out models.Invoice
 	var invNoOut *string
-	var poOut *string
-	var dt *time.Time
+	var poOut, grnOut *string
+	var dt, pdt, ddt *time.Time
 	if err := tx.QueryRow(ctx, `
-		SELECT id, invoice_no, vendor_id, po_id, amount, currency, status, match_status, invoice_date
+		SELECT id, invoice_no, vendor_id, po_id, grn_id, amount, currency, status, match_status, invoice_date,
+		       payment_date, payment_method, variance_resolution, due_date
 		FROM invoices WHERE id = $1`, id,
-	).Scan(&out.ID, &invNoOut, &out.VendorID, &poOut, &out.Amount, &out.Currency, &out.Status, &out.MatchStatus, &dt); err != nil {
+	).Scan(&out.ID, &invNoOut, &out.VendorID, &poOut, &grnOut, &out.Amount, &out.Currency, &out.Status, &out.MatchStatus, &dt,
+		&pdt, &out.PaymentMethod, &out.VarianceResolution, &ddt); err != nil {
 		return nil, err
 	}
 	out.InvoiceNo = invNoOut
 	out.PoID = poOut
+	out.GrnID = grnOut
 	if dt != nil {
 		out.InvoiceDate = dt.UTC().Format("2006-01-02")
 	}
+	out.PaymentDate = dayStr(pdt)
+	out.DueDate = dayStr(ddt)
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -599,6 +633,7 @@ func (p *Procurement) DeleteInvoice(ctx context.Context, id string, auditUser st
 }
 
 // UpdatePurchaseOrder supports replacing lines. expectedDate: if present and nil => clear.
+// requisitionID: if non-nil and points to "" => clear.
 func (p *Procurement) UpdatePurchaseOrder(
 	ctx context.Context,
 	id string,
@@ -606,6 +641,7 @@ func (p *Procurement) UpdatePurchaseOrder(
 	expectedDate **time.Time,
 	budgetID *string,
 	lines *[]models.PoLine,
+	requisitionID *string,
 	auditUser string,
 ) (*models.Po, error) {
 	id = strings.TrimSpace(id)
@@ -632,6 +668,11 @@ func (p *Procurement) UpdatePurchaseOrder(
 		exArg = (*time.Time)(nil)
 	} else {
 		exArg = **expectedDate
+	}
+	var reqArg interface{}
+	if requisitionID != nil {
+		s := strings.TrimSpace(*requisitionID)
+		reqArg = s // empty clears (NULLIF below)
 	}
 
 	tx, err := p.pool.Begin(ctx)
@@ -697,9 +738,10 @@ func (p *Procurement) UpdatePurchaseOrder(
 			currency = COALESCE($5, currency),
 			status = COALESCE($6, status),
 			expected_date = CASE WHEN $7::date IS NULL THEN expected_date ELSE $7::date END,
-			budget_id = COALESCE($8, budget_id)
+			budget_id = COALESCE($8, budget_id),
+			requisition_id = CASE WHEN $9::text IS NULL THEN requisition_id ELSE NULLIF($9::text, '')::uuid END
 		WHERE id = $1`,
-		id, vendorID, title, totalPtr, currency, status, exArg, budgetID,
+		id, vendorID, title, totalPtr, currency, status, exArg, budgetID, reqArg,
 	)
 	if err != nil {
 		return nil, err
@@ -779,9 +821,11 @@ func (p *Procurement) UpdatePurchaseOrder(
 	var out models.Po
 	var ca, ex *time.Time
 	if err := tx.QueryRow(ctx, `
-		SELECT id, vendor_id, title, total, currency, status, created_at, expected_date, budget_id
+		SELECT id, vendor_id, title, total, currency, status, payment_status, created_at, expected_date, COALESCE(budget_id::text, ''),
+		       COALESCE(requisition_id::text, '')
 		FROM purchase_orders WHERE id = $1`, id,
-	).Scan(&out.ID, &out.VendorID, &out.Title, &out.Total, &out.Currency, &out.Status, &ca, &ex, &out.BudgetID); err != nil {
+	).Scan(&out.ID, &out.VendorID, &out.Title, &out.Total, &out.Currency, &out.Status, &out.PaymentStatus, &ca, &ex, &out.BudgetID,
+		&out.RequisitionID); err != nil {
 		return nil, err
 	}
 	if ca != nil {
@@ -875,6 +919,11 @@ func (p *Procurement) DeletePurchaseOrder(ctx context.Context, id string, auditU
 // UpdateGrn supports clearing poId/receivedDate by passing pointers to "" (handlers do this).
 // When lines is non-nil it replaces all received lines (rejected once the GRN's
 // spend has been recognized, so a posted receipt's value can't be rewritten).
+//
+// qualityCritical, qcStatus, warehouse and notes (migration 032) are nil for
+// "no change". The QC hold is re-evaluated on the row as it would stand after
+// the update, so neither flipping the flag on a posted receipt nor posting a
+// held one gets through.
 func (p *Procurement) UpdateGrn(
 	ctx context.Context,
 	id string,
@@ -882,6 +931,8 @@ func (p *Procurement) UpdateGrn(
 	receivedDate **time.Time,
 	receivedBy, status *string,
 	lines *[]models.GrnLine,
+	qualityCritical *bool,
+	qcStatus, warehouse, notes *string,
 	auditUser string,
 ) (*models.Grn, error) {
 	id = strings.TrimSpace(id)
@@ -922,15 +973,32 @@ func (p *Procurement) UpdateGrn(
 			vendor_id = COALESCE($3, vendor_id),
 			received_date = CASE WHEN $4::date IS NULL THEN received_date ELSE $4::date END,
 			received_by = COALESCE($5, received_by),
-			status = COALESCE($6, status)
+			status = COALESCE($6, status),
+			quality_critical = COALESCE($7, quality_critical),
+			qc_status = COALESCE($8, qc_status),
+			warehouse = COALESCE($9, warehouse),
+			notes = COALESCE($10, notes)
 		WHERE id = $1`,
-		id, poArg, vendorID, rdArg, receivedBy, status,
+		id, poArg, vendorID, rdArg, receivedBy, status, qualityCritical, trimPtr(qcStatus), trimPtr(warehouse), trimPtr(notes),
 	)
 	if err != nil {
 		return nil, err
 	}
 	if ct.RowsAffected() == 0 {
 		return nil, ErrNotFound
+	}
+
+	// QC hold, evaluated on the row as updated (the tx rolls back on refusal).
+	{
+		var st, qc string
+		var critical bool
+		if err := tx.QueryRow(ctx, `SELECT status, quality_critical, qc_status FROM grns WHERE id = $1`, id).
+			Scan(&st, &critical, &qc); err != nil {
+			return nil, err
+		}
+		if err := grnQCGate(st, critical, qc); err != nil {
+			return nil, err
+		}
 	}
 
 	// Replace received lines when supplied — but not after the receipt's spend
@@ -970,8 +1038,11 @@ func (p *Procurement) UpdateGrn(
 	var out models.Grn
 	var poOut *string
 	var rd *time.Time
-	if err := tx.QueryRow(ctx, `SELECT id, po_id, vendor_id, received_date, received_by, status FROM grns WHERE id = $1`, id).
-		Scan(&out.ID, &poOut, &out.VendorID, &rd, &out.ReceivedBy, &out.Status); err != nil {
+	if err := tx.QueryRow(ctx, `
+		SELECT id, po_id, vendor_id, received_date, received_by, status, quality_critical, qc_status, warehouse, notes
+		FROM grns WHERE id = $1`, id).
+		Scan(&out.ID, &poOut, &out.VendorID, &rd, &out.ReceivedBy, &out.Status,
+			&out.QualityCritical, &out.QCStatus, &out.Warehouse, &out.Notes); err != nil {
 		return nil, err
 	}
 	out.PoID = poOut
@@ -1031,4 +1102,13 @@ func (p *Procurement) DeleteGrn(ctx context.Context, id string, auditUser string
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// trimPtr trims a PATCH string field in place, leaving nil (no change) alone.
+func trimPtr(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	s := strings.TrimSpace(*v)
+	return &s
 }

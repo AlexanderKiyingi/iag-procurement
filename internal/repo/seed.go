@@ -111,7 +111,8 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 
 	{
 		rows, err := s.pool.Query(ctx, `
-		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, COALESCE(budget_id::text, '')
+		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, COALESCE(budget_id::text, ''),
+		       COALESCE(pm_requisition_id, ''), notes
 		FROM requisitions ORDER BY id`)
 		if err != nil {
 			return nil, fmt.Errorf("requisitions: %w", err)
@@ -119,7 +120,8 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 		for rows.Next() {
 			var r models.Requisition
 			var ca, nb *time.Time
-			if err := rows.Scan(&r.ID, &r.Title, &r.Dept, &r.Requester, &r.Priority, &r.Status, &ca, &nb, &r.Total, &r.Currency, &r.BudgetID); err != nil {
+			if err := rows.Scan(&r.ID, &r.Title, &r.Dept, &r.Requester, &r.Priority, &r.Status, &ca, &nb, &r.Total, &r.Currency, &r.BudgetID,
+				&r.PMRequisitionID, &r.Notes); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -136,7 +138,7 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 
 	{
 		rows, err := s.pool.Query(ctx, `
-		SELECT id, title, status, due_date, created_at, winner_vendor_id, invited_vendor_ids
+		SELECT id, title, status, due_date, created_at, winner_vendor_id, invited_vendor_ids, COALESCE(requisition_id::text, '')
 		FROM rfqs ORDER BY id`)
 		if err != nil {
 			return nil, fmt.Errorf("rfqs: %w", err)
@@ -145,7 +147,7 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 			var q models.Rfq
 			var due, created *time.Time
 			var winner *string
-			if err := rows.Scan(&q.ID, &q.Title, &q.Status, &due, &created, &winner, &q.InvitedVendors); err != nil {
+			if err := rows.Scan(&q.ID, &q.Title, &q.Status, &due, &created, &winner, &q.InvitedVendors, &q.RequisitionID); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -185,7 +187,8 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 
 	{
 		rows, err := s.pool.Query(ctx, `
-		SELECT id, vendor_id, title, total, currency, status, payment_status, created_at, expected_date, COALESCE(budget_id::text, '')
+		SELECT id, vendor_id, title, total, currency, status, payment_status, created_at, expected_date, COALESCE(budget_id::text, ''),
+		       COALESCE(requisition_id::text, '')
 		FROM purchase_orders ORDER BY id`)
 		if err != nil {
 			return nil, fmt.Errorf("purchase_orders: %w", err)
@@ -193,7 +196,8 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 		for rows.Next() {
 			var p models.Po
 			var ca, ex *time.Time
-			if err := rows.Scan(&p.ID, &p.VendorID, &p.Title, &p.Total, &p.Currency, &p.Status, &p.PaymentStatus, &ca, &ex, &p.BudgetID); err != nil {
+			if err := rows.Scan(&p.ID, &p.VendorID, &p.Title, &p.Total, &p.Currency, &p.Status, &p.PaymentStatus, &ca, &ex, &p.BudgetID,
+				&p.RequisitionID); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -236,7 +240,8 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 
 	{
 		rows, err := s.pool.Query(ctx, `
-		SELECT id, po_id, vendor_id, received_date, received_by, status FROM grns ORDER BY id`)
+		SELECT id, po_id, vendor_id, received_date, received_by, status, quality_critical, qc_status, warehouse, notes
+		FROM grns ORDER BY id`)
 		if err != nil {
 			return nil, fmt.Errorf("grns: %w", err)
 		}
@@ -244,7 +249,8 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 			var g models.Grn
 			var poID *string
 			var rd *time.Time
-			if err := rows.Scan(&g.ID, &poID, &g.VendorID, &rd, &g.ReceivedBy, &g.Status); err != nil {
+			if err := rows.Scan(&g.ID, &poID, &g.VendorID, &rd, &g.ReceivedBy, &g.Status,
+				&g.QualityCritical, &g.QCStatus, &g.Warehouse, &g.Notes); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -262,7 +268,8 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 
 	{
 		rows, err := s.pool.Query(ctx, `
-		SELECT id, invoice_no, vendor_id, po_id, grn_id, amount, currency, status, match_status, invoice_date, payment_date, payment_method
+		SELECT id, invoice_no, vendor_id, po_id, grn_id, amount, currency, status, match_status, invoice_date, payment_date, payment_method,
+		       variance_resolution, due_date
 		FROM invoices ORDER BY id`)
 		if err != nil {
 			return nil, fmt.Errorf("invoices: %w", err)
@@ -271,8 +278,9 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 			var inv models.Invoice
 			var invNo *string
 			var poID, grnID *string
-			var idate, pdate *time.Time
-			if err := rows.Scan(&inv.ID, &invNo, &inv.VendorID, &poID, &grnID, &inv.Amount, &inv.Currency, &inv.Status, &inv.MatchStatus, &idate, &pdate, &inv.PaymentMethod); err != nil {
+			var idate, pdate, ddate *time.Time
+			if err := rows.Scan(&inv.ID, &invNo, &inv.VendorID, &poID, &grnID, &inv.Amount, &inv.Currency, &inv.Status, &inv.MatchStatus, &idate, &pdate, &inv.PaymentMethod,
+				&inv.VarianceResolution, &ddate); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -281,6 +289,7 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 			inv.GrnID = grnID
 			inv.InvoiceDate = fdate(idate)
 			inv.PaymentDate = fdate(pdate)
+			inv.DueDate = fdate(ddate)
 			out.Invoices = append(out.Invoices, inv)
 		}
 		if err := rows.Err(); err != nil {
@@ -292,14 +301,14 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 
 	{
 		rows, err := s.pool.Query(ctx, `
-		SELECT id, vendor_id, title, start_date, end_date, value, currency, status FROM contracts ORDER BY id`)
+		SELECT id, vendor_id, title, start_date, end_date, value, currency, status, committed_volume FROM contracts ORDER BY id`)
 		if err != nil {
 			return nil, fmt.Errorf("contracts: %w", err)
 		}
 		for rows.Next() {
 			var ct models.Contract
 			var sd, ed *time.Time
-			if err := rows.Scan(&ct.ID, &ct.VendorID, &ct.Title, &sd, &ed, &ct.Value, &ct.Currency, &ct.Status); err != nil {
+			if err := rows.Scan(&ct.ID, &ct.VendorID, &ct.Title, &sd, &ed, &ct.Value, &ct.Currency, &ct.Status, &ct.CommittedVolume); err != nil {
 				rows.Close()
 				return nil, err
 			}

@@ -20,6 +20,9 @@ type Procurement struct {
 	pool              *pgxpool.Pool
 	outbox            *outbox.Store
 	approvalThreshold float64
+	// invoiceVariancePct is the PO/invoice difference (percent) tolerated on
+	// approval without a recorded variance resolution.
+	invoiceVariancePct float64
 
 	// Desk chains are read from requisition_approval_desks and cached: the
 	// matrix is deployment configuration, not per-request data.
@@ -49,8 +52,17 @@ func (p *Procurement) poInitialStatus(total float64) string {
 }
 
 func NewProcurement(pool *pgxpool.Pool) *Procurement {
-	return &Procurement{pool: pool}
+	return &Procurement{pool: pool, invoiceVariancePct: DefaultInvoiceVariancePct}
 }
+
+// DefaultInvoiceVariancePct mirrors config.InvoiceVariancePct's default so a
+// repo built without the config wired still applies a sane gate.
+const DefaultInvoiceVariancePct = 2.0
+
+// SetInvoiceVarianceTolerance sets the percentage by which an invoice may
+// differ from its PO total and still be approved with no variance resolution
+// recorded (see config.InvoiceVariancePct).
+func (p *Procurement) SetInvoiceVarianceTolerance(pct float64) { p.invoiceVariancePct = pct }
 
 // newDocNo builds the human-facing number for a document: the number a person
 // quotes in an email or writes on a delivery note.
@@ -67,7 +79,7 @@ func newDocNo(prefix string) string {
 }
 
 // CreateRequisition inserts a requisition and an audit trail row.
-func (p *Procurement) CreateRequisition(ctx context.Context, title, dept, requester, priority, status string, neededBy *time.Time, total float64, currency, budgetID, auditUser string) (*models.Requisition, error) {
+func (p *Procurement) CreateRequisition(ctx context.Context, title, dept, requester, priority, status string, neededBy *time.Time, total float64, currency, budgetID, notes, auditUser string) (*models.Requisition, error) {
 	if currency == "" {
 		currency = "USD"
 	}
@@ -89,9 +101,9 @@ func (p *Procurement) CreateRequisition(ctx context.Context, title, dept, reques
 
 	var id string
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO requisitions (doc_no, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
-		docNo, title, dept, requester, priority, status, createdDay, neededBy, total, currency, budgetID,
+		INSERT INTO requisitions (doc_no, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id, notes)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+		docNo, title, dept, requester, priority, status, createdDay, neededBy, total, currency, budgetID, strings.TrimSpace(notes),
 	).Scan(&id); err != nil {
 		return nil, err
 	}
@@ -123,6 +135,7 @@ func (p *Procurement) CreateRequisition(ctx context.Context, title, dept, reques
 		Total:     total,
 		Currency:  currency,
 		BudgetID:  budgetID,
+		Notes:     strings.TrimSpace(notes),
 	}
 	if neededBy != nil {
 		out.NeededBy = neededBy.UTC().Format("2006-01-02")
@@ -211,16 +224,17 @@ func (p *Procurement) CreatePurchaseOrder(ctx context.Context, vendorID, title, 
 	}
 
 	out := models.Po{
-		ID:           id,
-		VendorID:     vendorID,
-		Title:        title,
-		Total:        total,
-		Currency:     currency,
-		Status:       status,
-		CreatedAt:    createdDay.Format("2006-01-02"),
-		BudgetID:     budgetID,
-		Items:        append([]models.PoLine(nil), lines...),
-		ExpectedDate: "",
+		ID:            id,
+		VendorID:      vendorID,
+		Title:         title,
+		Total:         total,
+		Currency:      currency,
+		Status:        status,
+		CreatedAt:     createdDay.Format("2006-01-02"),
+		BudgetID:      budgetID,
+		Items:         append([]models.PoLine(nil), lines...),
+		ExpectedDate:  "",
+		RequisitionID: strings.TrimSpace(requisitionID),
 	}
 	if expectedDate != nil {
 		out.ExpectedDate = expectedDate.UTC().Format("2006-01-02")

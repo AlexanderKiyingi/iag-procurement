@@ -142,12 +142,16 @@ func (a *API) postRfq(c *gin.Context) {
 }
 
 type postGrnBody struct {
-	VendorID     string           `json:"vendorId" binding:"required"`
-	PoID         *string          `json:"poId"`
-	ReceivedBy   string           `json:"receivedBy"`
-	Status       string           `json:"status"`
-	ReceivedDate string           `json:"receivedDate"`
-	Lines        []models.GrnLine `json:"lines"`
+	VendorID        string           `json:"vendorId" binding:"required"`
+	PoID            *string          `json:"poId"`
+	ReceivedBy      string           `json:"receivedBy"`
+	Status          string           `json:"status"` // defaults to Draft
+	ReceivedDate    string           `json:"receivedDate"`
+	Lines           []models.GrnLine `json:"lines"`
+	QualityCritical bool             `json:"qualityCritical"`
+	QCStatus        string           `json:"qcStatus"`
+	Warehouse       string           `json:"warehouse"`
+	Notes           string           `json:"notes"`
 }
 
 func (a *API) postGrn(c *gin.Context) {
@@ -174,7 +178,9 @@ func (a *API) postGrn(c *gin.Context) {
 	}
 	row, err := a.procurement.CreateGrn(c.Request.Context(),
 		strings.TrimSpace(body.VendorID), poID, strings.TrimSpace(body.ReceivedBy), strings.TrimSpace(body.Status),
-		rd, body.Lines, authActorEmail(c))
+		rd, body.Lines,
+		body.QualityCritical, strings.TrimSpace(body.QCStatus), strings.TrimSpace(body.Warehouse), strings.TrimSpace(body.Notes),
+		authActorEmail(c))
 	if mapProcurementErr(c, err) {
 		return
 	}
@@ -185,12 +191,14 @@ func (a *API) postGrn(c *gin.Context) {
 }
 
 type postInvoiceBody struct {
-	VendorID    string  `json:"vendorId" binding:"required"`
-	PoID        *string `json:"poId"`
-	Amount      float64 `json:"amount"`
-	Currency    string  `json:"currency"`
-	InvoiceDate string  `json:"invoiceDate"`
-	InvoiceNo   *string `json:"invoiceNo"`
+	VendorID           string  `json:"vendorId" binding:"required"`
+	PoID               *string `json:"poId"`
+	Amount             float64 `json:"amount"`
+	Currency           string  `json:"currency"`
+	InvoiceDate        string  `json:"invoiceDate"`
+	InvoiceNo          *string `json:"invoiceNo"`
+	VarianceResolution string  `json:"varianceResolution"`
+	DueDate            string  `json:"dueDate"`
 }
 
 func (a *API) postInvoice(c *gin.Context) {
@@ -208,6 +216,11 @@ func (a *API) postInvoice(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invoiceDate must be YYYY-MM-DD"})
 		return
 	}
+	due, err := parseOptionalDay("2006-01-02", body.DueDate)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "dueDate must be YYYY-MM-DD"})
+		return
+	}
 	var poID *string
 	if body.PoID != nil {
 		s := strings.TrimSpace(*body.PoID)
@@ -217,7 +230,7 @@ func (a *API) postInvoice(c *gin.Context) {
 	}
 	row, err := a.procurement.CreateInvoice(c.Request.Context(),
 		strings.TrimSpace(body.VendorID), poID, body.Amount, strings.TrimSpace(body.Currency),
-		idate, body.InvoiceNo, authActorEmail(c))
+		idate, body.InvoiceNo, strings.TrimSpace(body.VarianceResolution), due, authActorEmail(c))
 	if mapProcurementErr(c, err) {
 		return
 	}
@@ -228,13 +241,14 @@ func (a *API) postInvoice(c *gin.Context) {
 }
 
 type postContractBody struct {
-	VendorID  string  `json:"vendorId" binding:"required"`
-	Title     string  `json:"title" binding:"required"`
-	StartDate string  `json:"startDate"`
-	EndDate   string  `json:"endDate"`
-	Value     float64 `json:"value"`
-	Currency  string  `json:"currency"`
-	Status    string  `json:"status"`
+	VendorID        string  `json:"vendorId" binding:"required"`
+	Title           string  `json:"title" binding:"required"`
+	StartDate       string  `json:"startDate"`
+	EndDate         string  `json:"endDate"`
+	Value           float64 `json:"value"`
+	Currency        string  `json:"currency"`
+	Status          string  `json:"status"`
+	CommittedVolume float64 `json:"committedVolume"`
 }
 
 func (a *API) postContract(c *gin.Context) {
@@ -259,7 +273,7 @@ func (a *API) postContract(c *gin.Context) {
 	}
 	row, err := a.procurement.CreateContract(c.Request.Context(),
 		strings.TrimSpace(body.VendorID), strings.TrimSpace(body.Title), sd, ed, body.Value,
-		strings.TrimSpace(body.Currency), strings.TrimSpace(body.Status), authActorEmail(c))
+		strings.TrimSpace(body.Currency), strings.TrimSpace(body.Status), body.CommittedVolume, authActorEmail(c))
 	if mapProcurementErr(c, err) {
 		return
 	}

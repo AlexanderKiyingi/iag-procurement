@@ -214,9 +214,10 @@ func (a *API) openRequisitionDeskChain(c *gin.Context) {
 }
 
 // submitRequisitionToDesk moves a draft — or an amended request — onto its first
-// engaged desk.
+// engaged desk. A requisition that was never explicitly opened is put on the
+// default chain first, by the caller, in the same transaction.
 func (a *API) submitRequisitionToDesk(c *gin.Context) {
-	a.applyDeskTransition(c, func(eng *approvalchain.Engine, s approvalchain.State, actor approvalchain.Actor, body deskReasonBody) (approvalchain.State, error) {
+	a.applyDeskTransitionOpts(c, true, func(eng *approvalchain.Engine, s approvalchain.State, actor approvalchain.Actor, body deskReasonBody) (approvalchain.State, error) {
 		return eng.Submit(s, actor)
 	})
 }
@@ -266,6 +267,14 @@ type deskTransitionFn func(*approvalchain.Engine, approvalchain.State, approvalc
 // actor, apply the transition under a row lock, and return the refreshed
 // tracker so the client never has to re-fetch to redraw.
 func (a *API) applyDeskTransition(c *gin.Context, fn deskTransitionFn) {
+	a.applyDeskTransitionOpts(c, false, fn)
+}
+
+// applyDeskTransitionOpts is applyDeskTransition with the submit route's
+// self-opening behaviour switchable: when selfOpen is set and the requisition
+// has no desk state, the repo opens the default chain for the caller before
+// applying fn, in one transaction.
+func (a *API) applyDeskTransitionOpts(c *gin.Context, selfOpen bool, fn deskTransitionFn) {
 	if !a.deskReady(c) {
 		return
 	}
@@ -275,14 +284,20 @@ func (a *API) applyDeskTransition(c *gin.Context, fn deskTransitionFn) {
 	}
 	id := strings.TrimSpace(c.Param("id"))
 	actor := deskActor(c)
+	transition := func(eng *approvalchain.Engine, s approvalchain.State) (approvalchain.State, error) {
+		return fn(eng, s, actor, body)
+	}
 
 	// The outcome event is enqueued to the transactional outbox inside
 	// ApplyDeskTransition, not emitted here: an approval that committed must
 	// not be able to lose its event because the process died afterwards.
-	if _, err := a.procurement.ApplyDeskTransition(c.Request.Context(), id,
-		func(eng *approvalchain.Engine, s approvalchain.State) (approvalchain.State, error) {
-			return fn(eng, s, actor, body)
-		}); mapProcurementErr(c, err) {
+	var err error
+	if selfOpen {
+		_, err = a.procurement.ApplyDeskTransitionSelfOpening(c.Request.Context(), id, actor.ID, transition)
+	} else {
+		_, err = a.procurement.ApplyDeskTransition(c.Request.Context(), id, transition)
+	}
+	if mapProcurementErr(c, err) {
 		return
 	}
 	a.InvalidateSeedCache(c.Request.Context())

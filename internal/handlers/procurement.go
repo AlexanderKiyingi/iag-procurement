@@ -27,6 +27,7 @@ type postRequisitionBody struct {
 	Total    float64 `json:"total"`
 	Currency string  `json:"currency"`
 	BudgetID string  `json:"budgetId" binding:"required"`
+	Notes    string  `json:"notes"`
 }
 
 type postPurchaseOrderBody struct {
@@ -198,6 +199,7 @@ func (a *API) postRequisition(c *gin.Context) {
 		body.Total,
 		body.Currency,
 		strings.TrimSpace(body.BudgetID),
+		strings.TrimSpace(body.Notes),
 		authActorEmail(c),
 	)
 	if mapProcurementErr(c, err) {

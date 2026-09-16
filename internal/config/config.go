@@ -94,6 +94,11 @@ type Config struct {
 	// PROCUREMENT_REQUIRE_TIERED_APPROVAL.
 	RequireTieredApproval bool
 
+	// InvoiceVariancePct is the percentage by which an invoice may differ from
+	// its purchase order total and still be approved without a recorded
+	// variance resolution. Default 2.0. Set via INVOICE_VARIANCE_TOLERANCE_PCT.
+	InvoiceVariancePct float64
+
 	// PeriodCloseEnabled turns on the daily background job that closes budgets
 	// whose period_end has passed. PeriodClosePolicy is the policy it applies
 	// ("lapse" releases open encumbrances, "carry" retains them).
@@ -199,6 +204,8 @@ func Load() (*Config, error) {
 		ApprovalThreshold: parseFloat(os.Getenv("PROCUREMENT_APPROVAL_THRESHOLD"), 0),
 
 		RequireTieredApproval: strings.EqualFold(os.Getenv("PROCUREMENT_REQUIRE_TIERED_APPROVAL"), "true"),
+
+		InvoiceVariancePct: parseFloat(os.Getenv("INVOICE_VARIANCE_TOLERANCE_PCT"), 2.0),
 
 		PeriodCloseEnabled: strings.EqualFold(os.Getenv("PROCUREMENT_PERIOD_CLOSE_ENABLED"), "true"),
 		PeriodClosePolicy:  strings.ToLower(getenv("PROCUREMENT_PERIOD_CLOSE_POLICY", "lapse")),

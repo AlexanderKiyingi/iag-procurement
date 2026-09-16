@@ -38,47 +38,52 @@ type Item struct {
 }
 
 type Budget struct {
-	ID           string  `json:"id"`
-	Code         string  `json:"code"`
-	Period       string  `json:"period"`
-	Allocated    float64 `json:"allocated"`
-	PreCommitted float64 `json:"preCommitted"`
-	Committed    float64 `json:"committed"`
-	Spent        float64 `json:"spent"`
-	Remaining    float64 `json:"remaining"`
-	Dept         string  `json:"dept"`
-	PeriodEnd    string  `json:"periodEnd,omitempty"`
-	PeriodClosedAt string `json:"periodClosedAt,omitempty"`
+	ID             string  `json:"id"`
+	Code           string  `json:"code"`
+	Period         string  `json:"period"`
+	Allocated      float64 `json:"allocated"`
+	PreCommitted   float64 `json:"preCommitted"`
+	Committed      float64 `json:"committed"`
+	Spent          float64 `json:"spent"`
+	Remaining      float64 `json:"remaining"`
+	Dept           string  `json:"dept"`
+	PeriodEnd      string  `json:"periodEnd,omitempty"`
+	PeriodClosedAt string  `json:"periodClosedAt,omitempty"`
 }
 
 type Requisition struct {
-	ID         string  `json:"id"`
-	Title      string  `json:"title"`
-	Dept       string  `json:"dept"`
-	Requester  string  `json:"requester"`
-	Priority   string  `json:"priority"`
-	Status     string  `json:"status"`
-	CreatedAt  string  `json:"createdAt"`
-	NeededBy   string  `json:"neededBy"`
-	Total      float64 `json:"total"`
-	Currency   string  `json:"currency"`
-	BudgetID   string  `json:"budgetId"`
+	ID        string  `json:"id"`
+	Title     string  `json:"title"`
+	Dept      string  `json:"dept"`
+	Requester string  `json:"requester"`
+	Priority  string  `json:"priority"`
+	Status    string  `json:"status"`
+	CreatedAt string  `json:"createdAt"`
+	NeededBy  string  `json:"neededBy"`
+	Total     float64 `json:"total"`
+	Currency  string  `json:"currency"`
+	BudgetID  string  `json:"budgetId"`
 	// PMRequisitionID is the id of the Project Manager request this row was
 	// imported from, cash or material. It was stored from the start but never
 	// returned, so a caller could not tell which of its own requests a
 	// requisition belonged to — which is what an app needs in order to show the
 	// approval ladder's verdict next to the request the user raised.
 	PMRequisitionID string `json:"pmRequisitionId,omitempty"`
+	// Notes is the requester's free text (migration 032).
+	Notes string `json:"notes"`
 }
 
 type Rfq struct {
-	ID              string   `json:"id"`
-	Title           string   `json:"title"`
-	Status          string   `json:"status"`
-	DueDate         string   `json:"dueDate"`
-	CreatedAt       string   `json:"createdAt"`
-	WinnerVendor    *string  `json:"winnerVendor"`
-	InvitedVendors  []string `json:"invitedVendors"`
+	ID             string   `json:"id"`
+	Title          string   `json:"title"`
+	Status         string   `json:"status"`
+	DueDate        string   `json:"dueDate"`
+	CreatedAt      string   `json:"createdAt"`
+	WinnerVendor   *string  `json:"winnerVendor"`
+	InvitedVendors []string `json:"invitedVendors"`
+	// RequisitionID is the source requisition this RFQ was raised for. Stored
+	// since migration 013 but never returned until now.
+	RequisitionID string `json:"requisitionId,omitempty"`
 }
 
 // RfqQuote is a buyer-recorded vendor quote against an RFQ.
@@ -112,16 +117,25 @@ type Po struct {
 	ExpectedDate  string   `json:"expectedDate"`
 	BudgetID      string   `json:"budgetId"`
 	Items         []PoLine `json:"items"`
+	// RequisitionID is the source requisition this PO fulfils. Stored since
+	// migration 013 but never returned until now.
+	RequisitionID string `json:"requisitionId,omitempty"`
 }
 
 type Grn struct {
-	ID            string    `json:"id"`
-	PoID          *string   `json:"poId"`
-	VendorID      string    `json:"vendorId"`
-	ReceivedDate  string    `json:"receivedDate"`
-	ReceivedBy    string    `json:"receivedBy"`
-	Status        string    `json:"status"`
-	Lines         []GrnLine `json:"lines,omitempty"`
+	ID           string    `json:"id"`
+	PoID         *string   `json:"poId"`
+	VendorID     string    `json:"vendorId"`
+	ReceivedDate string    `json:"receivedDate"`
+	ReceivedBy   string    `json:"receivedBy"`
+	Status       string    `json:"status"`
+	Lines        []GrnLine `json:"lines,omitempty"`
+	// Migration 032. A quality-critical receipt cannot be posted until QC
+	// status is Released; the repo enforces that.
+	QualityCritical bool   `json:"qualityCritical"`
+	QCStatus        string `json:"qcStatus"`
+	Warehouse       string `json:"warehouse"`
+	Notes           string `json:"notes"`
 }
 
 // GrnLine is one received line on a goods receipt; its qty*unitPrice drives
@@ -146,6 +160,10 @@ type Invoice struct {
 	InvoiceDate   string   `json:"invoiceDate"`
 	PaymentDate   string   `json:"paymentDate,omitempty"`
 	PaymentMethod string   `json:"paymentMethod,omitempty"`
+	// Migration 032. VarianceResolution is the buyer's note explaining a
+	// PO/invoice amount difference; approval past the tolerance requires it.
+	VarianceResolution string `json:"varianceResolution"`
+	DueDate            string `json:"dueDate,omitempty"`
 }
 
 type Contract struct {
@@ -157,19 +175,22 @@ type Contract struct {
 	Value     float64 `json:"value"`
 	Currency  string  `json:"currency"`
 	Status    string  `json:"status"`
+	// CommittedVolume is the volume the contract binds the vendor to
+	// (migration 032).
+	CommittedVolume float64 `json:"committedVolume"`
 }
 
 type Payment struct {
-	ID           string  `json:"id"`
-	InvoiceID    string  `json:"invoiceId"`
-	VendorID     string  `json:"vendorId"`
-	Amount       float64 `json:"amount"`
-	Currency     string  `json:"currency"`
-	Date         string  `json:"date"`
-	Method       string  `json:"method"`
-	Reference    string  `json:"reference"`
-	Status       string  `json:"status"`
-	InitiatedBy  string  `json:"initiatedBy"`
+	ID          string  `json:"id"`
+	InvoiceID   string  `json:"invoiceId"`
+	VendorID    string  `json:"vendorId"`
+	Amount      float64 `json:"amount"`
+	Currency    string  `json:"currency"`
+	Date        string  `json:"date"`
+	Method      string  `json:"method"`
+	Reference   string  `json:"reference"`
+	Status      string  `json:"status"`
+	InitiatedBy string  `json:"initiatedBy"`
 }
 
 type AuditEntry struct {
@@ -182,15 +203,15 @@ type AuditEntry struct {
 }
 
 type SeedData struct {
-	Vendors       []Vendor       `json:"vendors"`
-	Items         []Item         `json:"items"`
-	Budgets       []Budget       `json:"budgets"`
-	Requisitions  []Requisition  `json:"requisitions"`
-	Rfqs          []Rfq          `json:"rfqs"`
-	Pos           []Po           `json:"pos"`
-	Grns          []Grn          `json:"grns"`
-	Invoices      []Invoice      `json:"invoices"`
-	Contracts     []Contract     `json:"contracts"`
-	Payments      []Payment      `json:"payments"`
-	Audit         []AuditEntry   `json:"audit"`
+	Vendors      []Vendor      `json:"vendors"`
+	Items        []Item        `json:"items"`
+	Budgets      []Budget      `json:"budgets"`
+	Requisitions []Requisition `json:"requisitions"`
+	Rfqs         []Rfq         `json:"rfqs"`
+	Pos          []Po          `json:"pos"`
+	Grns         []Grn         `json:"grns"`
+	Invoices     []Invoice     `json:"invoices"`
+	Contracts    []Contract    `json:"contracts"`
+	Payments     []Payment     `json:"payments"`
+	Audit        []AuditEntry  `json:"audit"`
 }

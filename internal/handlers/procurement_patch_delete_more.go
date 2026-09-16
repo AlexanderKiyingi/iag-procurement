@@ -117,6 +117,17 @@ type patchRfqBody struct {
 	DueDate          *string   `json:"dueDate"`          // if present and empty: clear
 	WinnerVendorID   *string   `json:"winnerVendorId"`   // if present and empty: clear
 	InvitedVendorIDs *[]string `json:"invitedVendorIds"` // if present: replace entire list
+	RequisitionID    *string   `json:"requisitionId"`    // if present and empty: clear
+}
+
+// validRfqStatuses is the allowed set for a PATCH status transition on an RFQ.
+// The award route sets Awarded itself; it stays in the list so a client that
+// mirrors the award back does not get a 400.
+var validRfqStatuses = map[string]bool{
+	"open":      true,
+	"closed":    true,
+	"awarded":   true,
+	"cancelled": true,
 }
 
 func (a *API) patchRfq(c *gin.Context) {
@@ -128,6 +139,10 @@ func (a *API) patchRfq(c *gin.Context) {
 	var body patchRfqBody
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if body.Status != nil && !validRfqStatuses[strings.ToLower(strings.TrimSpace(*body.Status))] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status; allowed: open, closed, awarded, cancelled"})
 		return
 	}
 	var duePtr **time.Time
@@ -152,6 +167,11 @@ func (a *API) patchRfq(c *gin.Context) {
 		s := strings.TrimSpace(*body.WinnerVendorID)
 		winner = &s // empty clears
 	}
+	var reqID *string
+	if body.RequisitionID != nil {
+		s := strings.TrimSpace(*body.RequisitionID)
+		reqID = &s // empty clears
+	}
 	row, err := a.procurement.UpdateRfq(
 		c.Request.Context(),
 		id,
@@ -160,6 +180,7 @@ func (a *API) patchRfq(c *gin.Context) {
 		duePtr,
 		winner,
 		body.InvitedVendorIDs,
+		reqID,
 		authActorEmail(c),
 	)
 	if mapProcurementErr(c, err) {
@@ -184,13 +205,14 @@ func (a *API) deleteRfq(c *gin.Context) {
 }
 
 type patchContractBody struct {
-	VendorID  *string  `json:"vendorId"`
-	Title     *string  `json:"title"`
-	StartDate *string  `json:"startDate"` // if present and empty: clear
-	EndDate   *string  `json:"endDate"`   // if present and empty: clear
-	Value     *float64 `json:"value"`
-	Currency  *string  `json:"currency"`
-	Status    *string  `json:"status"`
+	VendorID        *string  `json:"vendorId"`
+	Title           *string  `json:"title"`
+	StartDate       *string  `json:"startDate"` // if present and empty: clear
+	EndDate         *string  `json:"endDate"`   // if present and empty: clear
+	Value           *float64 `json:"value"`
+	Currency        *string  `json:"currency"`
+	Status          *string  `json:"status"`
+	CommittedVolume *float64 `json:"committedVolume"`
 }
 
 func (a *API) patchContract(c *gin.Context) {
@@ -248,6 +270,7 @@ func (a *API) patchContract(c *gin.Context) {
 		body.Value,
 		body.Currency,
 		body.Status,
+		body.CommittedVolume,
 		authActorEmail(c),
 	)
 	if mapProcurementErr(c, err) {
@@ -271,16 +294,35 @@ func (a *API) deleteContract(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// patchInvoiceBody deliberately has no matchStatus: the three-way match is
+// derived by the service on create and re-derived on approve, and a client
+// that could write it could mark an unmatched invoice Matched.
 type patchInvoiceBody struct {
-	InvoiceNo   *string  `json:"invoiceNo"` // if present and empty: clear
-	VendorID    *string  `json:"vendorId"`
-	PoID        *string  `json:"poId"` // if present and empty: clear
-	Amount      *float64 `json:"amount"`
-	Currency    *string  `json:"currency"`
-	Status      *string  `json:"status"`
-	MatchStatus *string  `json:"matchStatus"`
-	InvoiceDate *string  `json:"invoiceDate"` // if present and empty: clear
+	InvoiceNo          *string  `json:"invoiceNo"` // if present and empty: clear
+	VendorID           *string  `json:"vendorId"`
+	PoID               *string  `json:"poId"` // if present and empty: clear
+	Amount             *float64 `json:"amount"`
+	Currency           *string  `json:"currency"`
+	Status             *string  `json:"status"`
+	InvoiceDate        *string  `json:"invoiceDate"` // if present and empty: clear
+	VarianceResolution *string  `json:"varianceResolution"`
+	DueDate            *string  `json:"dueDate"` // if present and empty: clear
 }
+
+// validInvoiceStatuses is the allowed set for a PATCH status transition on an
+// invoice. approved and paid are listed because they are real statuses, but
+// the handler refuses to set them here: approved is the approval route's job
+// and paid is written by the finance payment writeback.
+var validInvoiceStatuses = map[string]bool{
+	"pending":   true,
+	"approved":  true,
+	"paid":      true,
+	"disputed":  true,
+	"rejected":  true,
+	"cancelled": true,
+}
+
+const invoiceStatusViaApprovalMsg = "invoice status is set by the approval route; approve via POST /invoices/{id}/approve (paid is recorded by the payment writeback)"
 
 func (a *API) patchInvoice(c *gin.Context) {
 	if a.procurement == nil {
@@ -292,6 +334,17 @@ func (a *API) patchInvoice(c *gin.Context) {
 	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	if body.Status != nil {
+		st := strings.ToLower(strings.TrimSpace(*body.Status))
+		if !validInvoiceStatuses[st] {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status; allowed: pending, approved, paid, disputed, rejected, cancelled"})
+			return
+		}
+		if st == "approved" || st == "paid" {
+			c.JSON(http.StatusConflict, gin.H{"error": invoiceStatusViaApprovalMsg})
+			return
+		}
 	}
 	var po *string
 	if body.PoID != nil {
@@ -320,6 +373,23 @@ func (a *API) patchInvoice(c *gin.Context) {
 			datePtr = &tmp
 		}
 	}
+	var duePtr **time.Time
+	if body.DueDate != nil {
+		s := strings.TrimSpace(*body.DueDate)
+		if s == "" {
+			var nilTime *time.Time
+			duePtr = &nilTime
+		} else {
+			t, err := time.Parse("2006-01-02", s)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "dueDate must be YYYY-MM-DD"})
+				return
+			}
+			utc := t.UTC()
+			tmp := &utc
+			duePtr = &tmp
+		}
+	}
 	row, err := a.procurement.UpdateInvoice(
 		c.Request.Context(),
 		id,
@@ -329,8 +399,10 @@ func (a *API) patchInvoice(c *gin.Context) {
 		body.Amount,
 		body.Currency,
 		body.Status,
-		body.MatchStatus,
+		nil, // matchStatus is derived by the service, never taken from a client
 		datePtr,
+		body.VarianceResolution,
+		duePtr,
 		authActorEmail(c),
 	)
 	if mapProcurementErr(c, err) {
@@ -355,13 +427,14 @@ func (a *API) deleteInvoice(c *gin.Context) {
 }
 
 type patchPoBody struct {
-	VendorID     *string          `json:"vendorId"`
-	Title        *string          `json:"title"`
-	Currency     *string          `json:"currency"`
-	Status       *string          `json:"status"`
-	ExpectedDate *string          `json:"expectedDate"` // if present and empty: clear
-	BudgetID     *string          `json:"budgetId"`
-	Items        *[]models.PoLine `json:"items"` // if present: replace all lines and recompute total
+	VendorID      *string          `json:"vendorId"`
+	Title         *string          `json:"title"`
+	Currency      *string          `json:"currency"`
+	Status        *string          `json:"status"`
+	ExpectedDate  *string          `json:"expectedDate"` // if present and empty: clear
+	BudgetID      *string          `json:"budgetId"`
+	Items         *[]models.PoLine `json:"items"`         // if present: replace all lines and recompute total
+	RequisitionID *string          `json:"requisitionId"` // if present and empty: clear
 }
 
 // validPoStatuses is the allowed set for a PATCH status transition on a PO.
@@ -408,6 +481,11 @@ func (a *API) patchPurchaseOrder(c *gin.Context) {
 			exPtr = &tmp
 		}
 	}
+	var reqID *string
+	if body.RequisitionID != nil {
+		s := strings.TrimSpace(*body.RequisitionID)
+		reqID = &s // empty clears
+	}
 	row, err := a.procurement.UpdatePurchaseOrder(
 		c.Request.Context(),
 		id,
@@ -418,6 +496,7 @@ func (a *API) patchPurchaseOrder(c *gin.Context) {
 		exPtr,
 		body.BudgetID,
 		body.Items,
+		reqID,
 		authActorEmail(c),
 	)
 	if mapProcurementErr(c, err) {
@@ -442,12 +521,16 @@ func (a *API) deletePurchaseOrder(c *gin.Context) {
 }
 
 type patchGrnBody struct {
-	PoID         *string           `json:"poId"` // if present and empty: clear
-	VendorID     *string           `json:"vendorId"`
-	ReceivedDate *string           `json:"receivedDate"` // if present and empty: clear
-	ReceivedBy   *string           `json:"receivedBy"`
-	Status       *string           `json:"status"`
-	Lines        *[]models.GrnLine `json:"lines"` // if present: replace all received lines
+	PoID            *string           `json:"poId"` // if present and empty: clear
+	VendorID        *string           `json:"vendorId"`
+	ReceivedDate    *string           `json:"receivedDate"` // if present and empty: clear
+	ReceivedBy      *string           `json:"receivedBy"`
+	Status          *string           `json:"status"`
+	Lines           *[]models.GrnLine `json:"lines"` // if present: replace all received lines
+	QualityCritical *bool             `json:"qualityCritical"`
+	QCStatus        *string           `json:"qcStatus"`
+	Warehouse       *string           `json:"warehouse"`
+	Notes           *string           `json:"notes"`
 }
 
 func (a *API) patchGrn(c *gin.Context) {
@@ -492,6 +575,10 @@ func (a *API) patchGrn(c *gin.Context) {
 		body.ReceivedBy,
 		body.Status,
 		body.Lines,
+		body.QualityCritical,
+		body.QCStatus,
+		body.Warehouse,
+		body.Notes,
 		authActorEmail(c),
 	)
 	if mapProcurementErr(c, err) {

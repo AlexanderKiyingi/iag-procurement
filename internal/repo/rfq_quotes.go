@@ -217,6 +217,7 @@ func (p *Procurement) AwardRfq(ctx context.Context, rfqID, quoteID, vendorID, bu
 	out := models.Po{
 		ID: poID, VendorID: qVendor, Title: title, Total: qAmount, Currency: qCurrency,
 		Status: status, CreatedAt: createdDay.Format("2006-01-02"), BudgetID: budgetID, Items: []models.PoLine{},
+		RequisitionID: deref(reqID),
 	}
 	if expectedDate != nil {
 		out.ExpectedDate = expectedDate.UTC().Format("2006-01-02")

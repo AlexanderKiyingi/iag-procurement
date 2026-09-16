@@ -126,11 +126,11 @@ func (p *Procurement) GetRequisitionByOrigin(ctx context.Context, originSystem, 
 		created, needed *time.Time
 	)
 	err := p.pool.QueryRow(ctx, `
-		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, COALESCE(budget_id::text, '')
+		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, COALESCE(budget_id::text, ''), notes
 		FROM requisitions WHERE origin_system = $1 AND origin_ref = $2`,
 		originSystem, originRef,
 	).Scan(&r.ID, &r.Title, &r.Dept, &r.Requester, &r.Priority, &r.Status,
-		&created, &needed, &r.Total, &r.Currency, &r.BudgetID)
+		&created, &needed, &r.Total, &r.Currency, &r.BudgetID, &r.Notes)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

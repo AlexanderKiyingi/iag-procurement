@@ -76,7 +76,7 @@ func (f *deskFixture) newRequisition(ctx context.Context, total float64) (reqID,
 		f.t.Fatalf("budget: %v", err)
 	}
 	req, err := f.p.CreateRequisition(
-		ctx, "Desk chain test", "Ops", requester, "Medium", "", nil, total, "UGX", budget.ID, requester)
+		ctx, "Desk chain test", "Ops", requester, "Medium", "", nil, total, "UGX", budget.ID, "", requester)
 	if err != nil {
 		f.t.Fatalf("requisition: %v", err)
 	}

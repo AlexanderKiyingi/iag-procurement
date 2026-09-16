@@ -64,7 +64,7 @@ func (p *Procurement) ListVendors(ctx context.Context, limit, offset int, q stri
 // name, or category).
 //
 // preferred_vendor_id is cast to text before COALESCE because migration 027
-// retyped it to UUID. COALESCE(uuid, '') asks Postgres to resolve a common type
+// retyped it to UUID. COALESCE(uuid, ”) asks Postgres to resolve a common type
 // for uuid and an empty-string literal; that fails at execution whatever the
 // data holds, so this query returned an error rather than rows on every
 // database that has run 027.
@@ -109,7 +109,7 @@ func (p *Procurement) ListRequisitions(ctx context.Context, limit, offset int, q
 	}
 	rows, err := p.pool.Query(ctx, `
 		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id,
-		       COALESCE(pm_requisition_id, '')
+		       COALESCE(pm_requisition_id, ''), notes
 		FROM requisitions `+where+`ORDER BY id LIMIT `+lp+` OFFSET `+op, args...)
 	if err != nil {
 		return nil, err
@@ -120,7 +120,7 @@ func (p *Procurement) ListRequisitions(ctx context.Context, limit, offset int, q
 		var r models.Requisition
 		var created, needed *time.Time
 		if err := rows.Scan(&r.ID, &r.Title, &r.Dept, &r.Requester, &r.Priority, &r.Status,
-			&created, &needed, &r.Total, &r.Currency, &r.BudgetID, &r.PMRequisitionID); err != nil {
+			&created, &needed, &r.Total, &r.Currency, &r.BudgetID, &r.PMRequisitionID, &r.Notes); err != nil {
 			return nil, err
 		}
 		r.CreatedAt = dayStr(created)
@@ -139,7 +139,8 @@ func (p *Procurement) ListPurchaseOrders(ctx context.Context, limit, offset int,
 		where = "WHERE id ILIKE " + sp + " OR title ILIKE " + sp + " OR vendor_id ILIKE " + sp + " OR status ILIKE " + sp + " "
 	}
 	rows, err := p.pool.Query(ctx, `
-		SELECT id, vendor_id, title, total, currency, status, created_at, expected_date, COALESCE(budget_id::text, '')
+		SELECT id, vendor_id, title, total, currency, status, created_at, expected_date, COALESCE(budget_id::text, ''),
+		       COALESCE(requisition_id::text, '')
 		FROM purchase_orders `+where+`ORDER BY id LIMIT `+lp+` OFFSET `+op, args...)
 	if err != nil {
 		return nil, err
@@ -151,7 +152,7 @@ func (p *Procurement) ListPurchaseOrders(ctx context.Context, limit, offset int,
 		var po models.Po
 		var created, expected *time.Time
 		if err := rows.Scan(&po.ID, &po.VendorID, &po.Title, &po.Total, &po.Currency, &po.Status,
-			&created, &expected, &po.BudgetID); err != nil {
+			&created, &expected, &po.BudgetID, &po.RequisitionID); err != nil {
 			return nil, err
 		}
 		po.CreatedAt = dayStr(created)
@@ -205,10 +206,11 @@ func (p *Procurement) GetPurchaseOrder(ctx context.Context, id string) (*models.
 	var po models.Po
 	var created, expected *time.Time
 	err := p.pool.QueryRow(ctx, `
-		SELECT id, vendor_id, title, total, currency, status, payment_status, created_at, expected_date, COALESCE(budget_id::text, '')
+		SELECT id, vendor_id, title, total, currency, status, payment_status, created_at, expected_date, COALESCE(budget_id::text, ''),
+		       COALESCE(requisition_id::text, '')
 		FROM purchase_orders WHERE id = $1`, id,
 	).Scan(&po.ID, &po.VendorID, &po.Title, &po.Total, &po.Currency, &po.Status, &po.PaymentStatus,
-		&created, &expected, &po.BudgetID)
+		&created, &expected, &po.BudgetID, &po.RequisitionID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -248,7 +250,8 @@ func (p *Procurement) ListInvoices(ctx context.Context, limit, offset int, q str
 			" OR status ILIKE " + sp + " OR match_status ILIKE " + sp + " "
 	}
 	rows, err := p.pool.Query(ctx, `
-		SELECT id, invoice_no, vendor_id, po_id, amount, currency, status, match_status, invoice_date
+		SELECT id, invoice_no, vendor_id, po_id, grn_id, amount, currency, status, match_status, invoice_date,
+		       payment_date, payment_method, variance_resolution, due_date
 		FROM invoices `+where+`ORDER BY id LIMIT `+lp+` OFFSET `+op, args...)
 	if err != nil {
 		return nil, err
@@ -257,12 +260,15 @@ func (p *Procurement) ListInvoices(ctx context.Context, limit, offset int, q str
 	out := []models.Invoice{}
 	for rows.Next() {
 		var inv models.Invoice
-		var idate *time.Time
-		if err := rows.Scan(&inv.ID, &inv.InvoiceNo, &inv.VendorID, &inv.PoID, &inv.Amount,
-			&inv.Currency, &inv.Status, &inv.MatchStatus, &idate); err != nil {
+		var idate, pdate, ddate *time.Time
+		if err := rows.Scan(&inv.ID, &inv.InvoiceNo, &inv.VendorID, &inv.PoID, &inv.GrnID, &inv.Amount,
+			&inv.Currency, &inv.Status, &inv.MatchStatus, &idate,
+			&pdate, &inv.PaymentMethod, &inv.VarianceResolution, &ddate); err != nil {
 			return nil, err
 		}
 		inv.InvoiceDate = dayStr(idate)
+		inv.PaymentDate = dayStr(pdate)
+		inv.DueDate = dayStr(ddate)
 		out = append(out, inv)
 	}
 	return out, rows.Err()

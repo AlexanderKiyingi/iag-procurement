@@ -128,6 +128,7 @@ func migrationFiles() []string {
 		"029_invoice_grn_fk.sql",
 		"030_item_attrs.sql",
 		"031_document_numbers.sql",
+		"032_form_fields.sql",
 	}
 }
 

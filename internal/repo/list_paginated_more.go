@@ -63,7 +63,7 @@ func (p *Procurement) ListRfqs(ctx context.Context, limit, offset int, q string)
 		where = "WHERE id ILIKE " + sp + " OR title ILIKE " + sp + " OR status ILIKE " + sp + " "
 	}
 	rows, err := p.pool.Query(ctx, `
-		SELECT id, title, status, due_date, created_at, winner_vendor_id, invited_vendor_ids
+		SELECT id, title, status, due_date, created_at, winner_vendor_id, invited_vendor_ids, COALESCE(requisition_id::text, '')
 		FROM rfqs `+where+`ORDER BY id LIMIT `+lp+` OFFSET `+op, args...)
 	if err != nil {
 		return nil, err
@@ -74,7 +74,7 @@ func (p *Procurement) ListRfqs(ctx context.Context, limit, offset int, q string)
 		var r models.Rfq
 		var due, created *time.Time
 		var winner *string
-		if err := rows.Scan(&r.ID, &r.Title, &r.Status, &due, &created, &winner, &r.InvitedVendors); err != nil {
+		if err := rows.Scan(&r.ID, &r.Title, &r.Status, &due, &created, &winner, &r.InvitedVendors, &r.RequisitionID); err != nil {
 			return nil, err
 		}
 		r.DueDate = dayStr(due)
@@ -98,7 +98,7 @@ func (p *Procurement) ListGrns(ctx context.Context, limit, offset int, q string)
 			" OR status ILIKE " + sp + " "
 	}
 	rows, err := p.pool.Query(ctx, `
-		SELECT id, po_id, vendor_id, received_date, received_by, status
+		SELECT id, po_id, vendor_id, received_date, received_by, status, quality_critical, qc_status, warehouse, notes
 		FROM grns `+where+`ORDER BY id LIMIT `+lp+` OFFSET `+op, args...)
 	if err != nil {
 		return nil, err
@@ -110,7 +110,8 @@ func (p *Procurement) ListGrns(ctx context.Context, limit, offset int, q string)
 		var g models.Grn
 		var poID *string
 		var rd *time.Time
-		if err := rows.Scan(&g.ID, &poID, &g.VendorID, &rd, &g.ReceivedBy, &g.Status); err != nil {
+		if err := rows.Scan(&g.ID, &poID, &g.VendorID, &rd, &g.ReceivedBy, &g.Status,
+			&g.QualityCritical, &g.QCStatus, &g.Warehouse, &g.Notes); err != nil {
 			return nil, err
 		}
 		g.PoID = poID
@@ -162,7 +163,7 @@ func (p *Procurement) ListContracts(ctx context.Context, limit, offset int, q st
 			" OR status ILIKE " + sp + " "
 	}
 	rows, err := p.pool.Query(ctx, `
-		SELECT id, vendor_id, title, start_date, end_date, value, currency, status
+		SELECT id, vendor_id, title, start_date, end_date, value, currency, status, committed_volume
 		FROM contracts `+where+`ORDER BY id LIMIT `+lp+` OFFSET `+op, args...)
 	if err != nil {
 		return nil, err
@@ -172,7 +173,7 @@ func (p *Procurement) ListContracts(ctx context.Context, limit, offset int, q st
 	for rows.Next() {
 		var ct models.Contract
 		var sd, ed *time.Time
-		if err := rows.Scan(&ct.ID, &ct.VendorID, &ct.Title, &sd, &ed, &ct.Value, &ct.Currency, &ct.Status); err != nil {
+		if err := rows.Scan(&ct.ID, &ct.VendorID, &ct.Title, &sd, &ed, &ct.Value, &ct.Currency, &ct.Status, &ct.CommittedVolume); err != nil {
 			return nil, err
 		}
 		ct.StartDate = dayStr(sd)

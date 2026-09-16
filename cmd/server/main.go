@@ -157,6 +157,7 @@ func main() {
 
 	procurementRepo := repo.NewProcurement(pool)
 	procurementRepo.SetApprovalThreshold(cfg.ApprovalThreshold)
+	procurementRepo.SetInvoiceVarianceTolerance(cfg.InvoiceVariancePct)
 
 	// Daily budget period-close job: closes budgets whose period_end has passed,
 	// applying the configured policy (lapse / carry). Runs once shortly after

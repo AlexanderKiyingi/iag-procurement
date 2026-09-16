@@ -25,11 +25,13 @@ func (p *Procurement) GetInvoice(ctx context.Context, id string) (*models.Invoic
 	}
 	var inv models.Invoice
 	var invNo, poID, grnID *string
-	var idate, pdate *time.Time
+	var idate, pdate, ddate *time.Time
 	err := p.pool.QueryRow(ctx, `
-		SELECT id, invoice_no, vendor_id, po_id, grn_id, amount, currency, status, match_status, invoice_date, payment_date, payment_method
+		SELECT id, invoice_no, vendor_id, po_id, grn_id, amount, currency, status, match_status, invoice_date, payment_date, payment_method,
+		       variance_resolution, due_date
 		FROM invoices WHERE id = $1`, id,
-	).Scan(&inv.ID, &invNo, &inv.VendorID, &poID, &grnID, &inv.Amount, &inv.Currency, &inv.Status, &inv.MatchStatus, &idate, &pdate, &inv.PaymentMethod)
+	).Scan(&inv.ID, &invNo, &inv.VendorID, &poID, &grnID, &inv.Amount, &inv.Currency, &inv.Status, &inv.MatchStatus, &idate, &pdate, &inv.PaymentMethod,
+		&inv.VarianceResolution, &ddate)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -45,6 +47,7 @@ func (p *Procurement) GetInvoice(ctx context.Context, id string) (*models.Invoic
 	if pdate != nil {
 		inv.PaymentDate = pdate.UTC().Format("2006-01-02")
 	}
+	inv.DueDate = dayStr(ddate)
 	return &inv, nil
 }
 
@@ -272,6 +275,7 @@ func (p *Procurement) CreateRfq(ctx context.Context, title string, dueDate *time
 		Status:         status,
 		CreatedAt:      createdDay.Format("2006-01-02"),
 		InvitedVendors: invited,
+		RequisitionID:  strings.TrimSpace(requisitionID),
 	}
 	if dueDate != nil {
 		out.DueDate = dueDate.UTC().Format("2006-01-02")
@@ -282,13 +286,23 @@ func (p *Procurement) CreateRfq(ctx context.Context, title string, dueDate *time
 // CreateGrn inserts a goods receipt note, its received lines, and an audit
 // trail entry. Lines drive proportional budget spend recognition when the GRN
 // is posted; a GRN with no lines recognizes the full PO remainder.
-func (p *Procurement) CreateGrn(ctx context.Context, vendorID string, poID *string, receivedBy, status string, receivedDate *time.Time, lines []models.GrnLine, auditUser string) (*models.Grn, error) {
+//
+// qualityCritical, qcStatus, warehouse and notes are the receiving-form fields
+// of migration 032. A quality-critical receipt is refused in Posted status
+// until qcStatus is Released — see grnQCGate.
+func (p *Procurement) CreateGrn(ctx context.Context, vendorID string, poID *string, receivedBy, status string, receivedDate *time.Time, lines []models.GrnLine, qualityCritical bool, qcStatus, warehouse, notes string, auditUser string) (*models.Grn, error) {
 	vendorID = strings.TrimSpace(vendorID)
 	if vendorID == "" {
 		return nil, fmt.Errorf("%w: vendorId is required", ErrInvalidArgument)
 	}
 	if status == "" {
 		status = "Draft"
+	}
+	qcStatus = strings.TrimSpace(qcStatus)
+	warehouse = strings.TrimSpace(warehouse)
+	notes = strings.TrimSpace(notes)
+	if err := grnQCGate(status, qualityCritical, qcStatus); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(receivedBy) == "" {
 		receivedBy = auditUser
@@ -315,9 +329,9 @@ func (p *Procurement) CreateGrn(ctx context.Context, vendorID string, poID *stri
 
 	var id string
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO grns (doc_no, po_id, vendor_id, received_date, received_by, status)
-		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-		docNo, poID, vendorID, rd, receivedBy, status,
+		INSERT INTO grns (doc_no, po_id, vendor_id, received_date, received_by, status, quality_critical, qc_status, warehouse, notes)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+		docNo, poID, vendorID, rd, receivedBy, status, qualityCritical, qcStatus, warehouse, notes,
 	).Scan(&id); err != nil {
 		return nil, err
 	}
@@ -348,6 +362,7 @@ func (p *Procurement) CreateGrn(ctx context.Context, vendorID string, poID *stri
 	out := &models.Grn{
 		ID: id, PoID: poID, VendorID: vendorID, ReceivedDate: rd.UTC().Format("2006-01-02"),
 		ReceivedBy: receivedBy, Status: status, Lines: lines,
+		QualityCritical: qualityCritical, QCStatus: qcStatus, Warehouse: warehouse, Notes: notes,
 	}
 	if err := p.recognizePOSpendOnReceipt(ctx, tx, out); err != nil {
 		return nil, err
@@ -361,8 +376,27 @@ func (p *Procurement) CreateGrn(ctx context.Context, vendorID string, poID *stri
 	return out, nil
 }
 
+// grnQCGate is the server-side QC hold: a receipt flagged quality-critical may
+// not carry Posted status until QC has released it. Posting is what recognises
+// budget spend and tells the rest of the platform the goods arrived, so a
+// receipt still under inspection must not get there on a client-side check
+// alone.
+func grnQCGate(status string, qualityCritical bool, qcStatus string) error {
+	if !qualityCritical || !strings.EqualFold(strings.TrimSpace(status), "Posted") {
+		return nil
+	}
+	if strings.EqualFold(strings.TrimSpace(qcStatus), "Released") {
+		return nil
+	}
+	return fmt.Errorf("%w: quality-critical receipt cannot be posted until QC status is Released", ErrConflict)
+}
+
 // CreateInvoice inserts an AP invoice row and audit trail entry.
-func (p *Procurement) CreateInvoice(ctx context.Context, vendorID string, poID *string, amount float64, currency string, invoiceDate *time.Time, invoiceNo *string, auditUser string) (*models.Invoice, error) {
+//
+// varianceResolution and dueDate are the payables-form fields of migration
+// 032; the resolution is what ApproveInvoice requires once the invoice differs
+// from its PO by more than the configured tolerance.
+func (p *Procurement) CreateInvoice(ctx context.Context, vendorID string, poID *string, amount float64, currency string, invoiceDate *time.Time, invoiceNo *string, varianceResolution string, dueDate *time.Time, auditUser string) (*models.Invoice, error) {
 	vendorID = strings.TrimSpace(vendorID)
 	if vendorID == "" {
 		return nil, fmt.Errorf("%w: vendorId is required", ErrInvalidArgument)
@@ -403,9 +437,9 @@ func (p *Procurement) CreateInvoice(ctx context.Context, vendorID string, poID *
 
 	var id string
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO invoices (invoice_no, vendor_id, po_id, grn_id, amount, currency, status, match_status, invoice_date)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-		invNo, vendorID, poID, grnID, amount, currency, status, matchStatus, idate,
+		INSERT INTO invoices (invoice_no, vendor_id, po_id, grn_id, amount, currency, status, match_status, invoice_date, variance_resolution, due_date)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+		invNo, vendorID, poID, grnID, amount, currency, status, matchStatus, idate, strings.TrimSpace(varianceResolution), dueDate,
 	).Scan(&id); err != nil {
 		return nil, err
 	}
@@ -422,6 +456,7 @@ func (p *Procurement) CreateInvoice(ctx context.Context, vendorID string, poID *
 	out := models.Invoice{
 		ID: id, VendorID: vendorID, PoID: poID, GrnID: grnID, Amount: amount, Currency: currency,
 		Status: status, MatchStatus: matchStatus, InvoiceDate: idate.UTC().Format("2006-01-02"),
+		VarianceResolution: strings.TrimSpace(varianceResolution), DueDate: dayStr(dueDate),
 	}
 	if invoiceNo != nil && strings.TrimSpace(*invoiceNo) != "" {
 		s := strings.TrimSpace(*invoiceNo)
@@ -492,9 +527,9 @@ func (p *Procurement) ApproveInvoice(ctx context.Context, id, auditUser string) 
 
 	var poID *string
 	var amount float64
-	var status string
-	err = tx.QueryRow(ctx, `SELECT po_id, amount, status FROM invoices WHERE id = $1 FOR UPDATE`, id).
-		Scan(&poID, &amount, &status)
+	var status, varianceResolution string
+	err = tx.QueryRow(ctx, `SELECT po_id, amount, status, variance_resolution FROM invoices WHERE id = $1 FOR UPDATE`, id).
+		Scan(&poID, &amount, &status, &varianceResolution)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -503,6 +538,23 @@ func (p *Procurement) ApproveInvoice(ctx context.Context, id, auditUser string) 
 	}
 	if strings.EqualFold(strings.TrimSpace(status), "Paid") {
 		return nil, fmt.Errorf("%w: invoice %s is already paid", ErrConflict, id)
+	}
+
+	// Variance gate: an invoice further from its PO than the tolerance needs a
+	// recorded explanation before anyone can clear it. Checked before the
+	// three-way match so the caller is told what to do (record a resolution)
+	// rather than only that the amounts disagree.
+	if poID != nil && strings.TrimSpace(*poID) != "" {
+		var poTotal float64
+		err := tx.QueryRow(ctx, `SELECT total FROM purchase_orders WHERE id = $1`, strings.TrimSpace(*poID)).Scan(&poTotal)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		if err == nil {
+			if err := invoiceVarianceGate(amount, poTotal, p.invoiceVariancePct, varianceResolution); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	match, grnID, err := p.deriveInvoiceMatchStatus(ctx, tx, poID, amount)
@@ -540,8 +592,24 @@ func (p *Procurement) ApproveInvoice(ctx context.Context, id, auditUser string) 
 	return out, nil
 }
 
+// invoiceVarianceGate refuses approval when the invoice differs from the PO
+// total by more than tolerancePct and no variance resolution has been
+// recorded. A PO total of zero has no meaningful percentage and is left to the
+// three-way match.
+func invoiceVarianceGate(amount, poTotal, tolerancePct float64, resolution string) error {
+	if poTotal == 0 {
+		return nil
+	}
+	pct := math.Abs(amount-poTotal) / math.Abs(poTotal) * 100
+	if pct <= tolerancePct || strings.TrimSpace(resolution) != "" {
+		return nil
+	}
+	return fmt.Errorf("%w: invoice differs from purchase order by %.1f%% (tolerance %g%%); record a variance resolution before approving",
+		ErrConflict, pct, tolerancePct)
+}
+
 // CreateContract inserts a vendor contract row and audit trail entry.
-func (p *Procurement) CreateContract(ctx context.Context, vendorID, title string, startDate, endDate *time.Time, value float64, currency, status string, auditUser string) (*models.Contract, error) {
+func (p *Procurement) CreateContract(ctx context.Context, vendorID, title string, startDate, endDate *time.Time, value float64, currency, status string, committedVolume float64, auditUser string) (*models.Contract, error) {
 	vendorID = strings.TrimSpace(vendorID)
 	title = strings.TrimSpace(title)
 	if vendorID == "" || title == "" {
@@ -563,9 +631,9 @@ func (p *Procurement) CreateContract(ctx context.Context, vendorID, title string
 
 	var id string
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO contracts (doc_no, vendor_id, title, start_date, end_date, value, currency, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-		docNo, vendorID, title, startDate, endDate, value, currency, status,
+		INSERT INTO contracts (doc_no, vendor_id, title, start_date, end_date, value, currency, status, committed_volume)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+		docNo, vendorID, title, startDate, endDate, value, currency, status, committedVolume,
 	).Scan(&id); err != nil {
 		return nil, err
 	}
@@ -584,6 +652,7 @@ func (p *Procurement) CreateContract(ctx context.Context, vendorID, title string
 	}
 	out := models.Contract{
 		ID: id, VendorID: vendorID, Title: title, Value: value, Currency: currency, Status: status,
+		CommittedVolume: committedVolume,
 	}
 	if startDate != nil {
 		out.StartDate = startDate.UTC().Format("2006-01-02")

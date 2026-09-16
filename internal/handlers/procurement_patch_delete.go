@@ -85,6 +85,7 @@ type patchRequisitionBody struct {
 	Total    *float64 `json:"total"`
 	Currency *string  `json:"currency"`
 	BudgetID *string  `json:"budgetId"`
+	Notes    *string  `json:"notes"`
 }
 
 func (a *API) patchRequisition(c *gin.Context) {
@@ -143,6 +144,7 @@ func (a *API) patchRequisition(c *gin.Context) {
 		body.BudgetID,
 		neededPtr,
 		body.Total,
+		body.Notes,
 		authActorEmail(c),
 	)
 	if mapProcurementErr(c, err) {

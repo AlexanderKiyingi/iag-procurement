@@ -58,7 +58,7 @@ func TestTieredRequisitionApproval(t *testing.T) {
 	}
 
 	// 10,000,000 sits in band 2 -> requires tier1 + tier2 signatures.
-	req, err := p.CreateRequisition(ctx, "Fuel", "Ops", requester, "Medium", "", nil, 10_000_000, "UGX", budget.ID, requester)
+	req, err := p.CreateRequisition(ctx, "Fuel", "Ops", requester, "Medium", "", nil, 10_000_000, "UGX", budget.ID, "", requester)
 	if err != nil {
 		t.Fatalf("requisition: %v", err)
 	}

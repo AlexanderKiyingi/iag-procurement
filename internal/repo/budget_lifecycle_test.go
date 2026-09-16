@@ -61,7 +61,7 @@ func TestBudgetLifecycle(t *testing.T) {
 	}
 
 	// 1) Approve a requisition for 600 -> pre-encumbered.
-	req, err := p.CreateRequisition(ctx, "Req", "Ops", requester, "Medium", "", nil, 600, "USD", budget.ID, requester)
+	req, err := p.CreateRequisition(ctx, "Req", "Ops", requester, "Medium", "", nil, 600, "USD", budget.ID, "", requester)
 	if err != nil {
 		t.Fatalf("requisition: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestBudgetLifecycle(t *testing.T) {
 
 	// 3) Partial receipt of 300 -> committed 300, spent 300.
 	if _, err := p.CreateGrn(ctx, vendor.ID, &po.ID, approver, "Posted", nil,
-		[]models.GrnLine{{ItemID: item.ID, Qty: 1, UnitPrice: 300}}, approver); err != nil {
+		[]models.GrnLine{{ItemID: item.ID, Qty: 1, UnitPrice: 300}}, false, "", "", "", approver); err != nil {
 		t.Fatalf("grn1: %v", err)
 	}
 	if pre, c, s, _ := readB(); pre != 0 || c != 300 || s != 300 {
@@ -97,7 +97,7 @@ func TestBudgetLifecycle(t *testing.T) {
 
 	// 4) Remainder receipt of 300 -> committed 0, spent 600.
 	if _, err := p.CreateGrn(ctx, vendor.ID, &po.ID, approver, "Posted", nil,
-		[]models.GrnLine{{ItemID: item.ID, Qty: 1, UnitPrice: 300}}, approver); err != nil {
+		[]models.GrnLine{{ItemID: item.ID, Qty: 1, UnitPrice: 300}}, false, "", "", "", approver); err != nil {
 		t.Fatalf("grn2: %v", err)
 	}
 	if pre, c, s, rem := readB(); pre != 0 || c != 0 || s != 600 || rem != 400 {
@@ -105,7 +105,7 @@ func TestBudgetLifecycle(t *testing.T) {
 	}
 
 	// 5) Over-budget approval is refused (available is 400, request is 600).
-	req2, err := p.CreateRequisition(ctx, "Req2", "Ops", requester, "Medium", "", nil, 600, "USD", budget.ID, requester)
+	req2, err := p.CreateRequisition(ctx, "Req2", "Ops", requester, "Medium", "", nil, 600, "USD", budget.ID, "", requester)
 	if err != nil {
 		t.Fatalf("requisition2: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestBudgetLifecycle(t *testing.T) {
 	}
 
 	// 6) Self-approval is refused.
-	req3, err := p.CreateRequisition(ctx, "Req3", "Ops", requester, "Medium", "", nil, 100, "USD", budget.ID, requester)
+	req3, err := p.CreateRequisition(ctx, "Req3", "Ops", requester, "Medium", "", nil, 100, "USD", budget.ID, "", requester)
 	if err != nil {
 		t.Fatalf("requisition3: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestBudgetLifecycle(t *testing.T) {
 	}
 
 	// 7) Approve a 200 requisition (pre=200), then lapse the period -> pre/committed cleared.
-	req4, err := p.CreateRequisition(ctx, "Req4", "Ops", requester, "Medium", "", nil, 200, "USD", budget.ID, requester)
+	req4, err := p.CreateRequisition(ctx, "Req4", "Ops", requester, "Medium", "", nil, 200, "USD", budget.ID, "", requester)
 	if err != nil {
 		t.Fatalf("requisition4: %v", err)
 	}

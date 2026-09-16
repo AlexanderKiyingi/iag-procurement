@@ -418,6 +418,24 @@ func (p *Procurement) OpenDeskChain(
 	}
 	defer tx.Rollback(ctx)
 
+	state, err := p.openDeskChainTx(ctx, tx, requisitionID, chainKey, requester, skip)
+	if err != nil {
+		return approvalchain.State{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return approvalchain.State{}, err
+	}
+	return state, nil
+}
+
+// openDeskChainTx is the body of OpenDeskChain inside the caller's transaction:
+// the tier-signature and already-open guards, scope capture, and the state
+// insert. Shared with the self-opening submit so "submit a draft that was never
+// explicitly opened" is one commit rather than two round trips that could land
+// half-way.
+func (p *Procurement) openDeskChainTx(
+	ctx context.Context, tx pgx.Tx, requisitionID, chainKey, requester string, skip []approvalchain.DeskKey,
+) (approvalchain.State, error) {
 	var total float64
 	if err := tx.QueryRow(ctx,
 		`SELECT total FROM requisitions WHERE id = $1`, requisitionID).Scan(&total); err != nil {
@@ -457,9 +475,6 @@ func (p *Procurement) OpenDeskChain(
 		Amount: total, Skip: skip, Scope: scope,
 	})
 	if err := insertDeskState(ctx, tx, requisitionID, state); err != nil {
-		return approvalchain.State{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return approvalchain.State{}, err
 	}
 	return state, nil
@@ -504,9 +519,35 @@ func requisitionStatusFor(s approvalchain.Status) string {
 func (p *Procurement) ApplyDeskTransition(
 	ctx context.Context, requisitionID string, fn DeskTransition,
 ) (approvalchain.State, error) {
+	return p.applyDeskTransition(ctx, requisitionID, "", fn)
+}
+
+// ApplyDeskTransitionSelfOpening is ApplyDeskTransition for the submit route:
+// when the requisition has no desk state yet it is first put on the default
+// "requisition" chain (no skips) as openedBy, in the same transaction, and the
+// transition is then applied to that fresh draft. A client that never called
+// /desk/open therefore still lands on the first desk instead of a 404.
+func (p *Procurement) ApplyDeskTransitionSelfOpening(
+	ctx context.Context, requisitionID, openedBy string, fn DeskTransition,
+) (approvalchain.State, error) {
+	if strings.TrimSpace(openedBy) == "" {
+		return approvalchain.State{}, fmt.Errorf(
+			"%w: the caller has no identity, so no one could submit this chain", ErrInvalidArgument)
+	}
+	return p.applyDeskTransition(ctx, requisitionID, openedBy, fn)
+}
+
+func (p *Procurement) applyDeskTransition(
+	ctx context.Context, requisitionID, openedBy string, fn DeskTransition,
+) (approvalchain.State, error) {
 	eng, err := p.DeskEngine(ctx)
 	if err != nil {
 		return approvalchain.State{}, err
+	}
+	if openedBy != "" {
+		if _, ok := eng.Registry().Get(ChainRequisition); !ok {
+			return approvalchain.State{}, fmt.Errorf("%w: unknown approval chain %q", ErrInvalidArgument, ChainRequisition)
+		}
 	}
 
 	tx, err := p.pool.Begin(ctx)
@@ -521,6 +562,9 @@ func (p *Procurement) ApplyDeskTransition(
 	}
 
 	before, err := p.loadDeskStateTx(ctx, tx, requisitionID)
+	if errors.Is(err, ErrNotFound) && openedBy != "" {
+		before, err = p.openDeskChainTx(ctx, tx, requisitionID, ChainRequisition, openedBy, nil)
+	}
 	if err != nil {
 		return approvalchain.State{}, err
 	}

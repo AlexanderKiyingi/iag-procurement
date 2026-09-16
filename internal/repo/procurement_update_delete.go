@@ -152,6 +152,7 @@ func (p *Procurement) UpdateRequisition(
 	title, dept, priority, status, currency, budgetID *string,
 	neededBy **time.Time,
 	total *float64,
+	notes *string,
 	auditUser string,
 ) (*models.Requisition, error) {
 	id = strings.TrimSpace(id)
@@ -202,9 +203,10 @@ func (p *Procurement) UpdateRequisition(
 			needed_by = CASE WHEN $6::date IS NULL THEN needed_by ELSE $6::date END,
 			total = COALESCE($7, total),
 			currency = COALESCE($8, currency),
-			budget_id = COALESCE($9, budget_id)
+			budget_id = COALESCE($9, budget_id),
+			notes = COALESCE($10, notes)
 		WHERE id = $1`,
-		id, title, dept, priority, status, neededByArg, total, currency, budgetID,
+		id, title, dept, priority, status, neededByArg, total, currency, budgetID, trimPtr(notes),
 	)
 	if err != nil {
 		return nil, err
@@ -235,12 +237,12 @@ func (p *Procurement) UpdateRequisition(
 	out := models.Requisition{}
 	if err := tx.QueryRow(ctx, `
 		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id,
-		       pm_requisition_id, pm_workspace_owner, budget_committed, pre_released
+		       pm_requisition_id, pm_workspace_owner, budget_committed, pre_released, notes
 		FROM requisitions WHERE id = $1`, id,
 	).Scan(
 		&out.ID, &out.Title, &out.Dept, &out.Requester, &out.Priority, &out.Status,
 		&createdAt, &needed, &out.Total, &out.Currency, &out.BudgetID,
-		&pmReqID, &pmOwner, &budgetCommitted, &preReleased,
+		&pmReqID, &pmOwner, &budgetCommitted, &preReleased, &out.Notes,
 	); err != nil {
 		return nil, err
 	}
