@@ -124,6 +124,9 @@ type patchRfqBody struct {
 // The award route sets Awarded itself; it stays in the list so a client that
 // mirrors the award back does not get a 400.
 var validRfqStatuses = map[string]bool{
+	// A draft is an RFQ not yet sent to its vendors; the procurement app's
+	// "save as draft" writes exactly this word.
+	"draft":     true,
 	"open":      true,
 	"closed":    true,
 	"awarded":   true,
@@ -142,7 +145,7 @@ func (a *API) patchRfq(c *gin.Context) {
 		return
 	}
 	if body.Status != nil && !validRfqStatuses[strings.ToLower(strings.TrimSpace(*body.Status))] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status; allowed: open, closed, awarded, cancelled"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status; allowed: draft, open, closed, awarded, cancelled"})
 		return
 	}
 	var duePtr **time.Time

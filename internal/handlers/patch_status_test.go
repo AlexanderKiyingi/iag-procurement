@@ -80,10 +80,10 @@ func TestPatchRfqRejectsUnknownStatus(t *testing.T) {
 	if code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400 (body %v)", code, out)
 	}
-	if out["error"] != "invalid status; allowed: open, closed, awarded, cancelled" {
+	if out["error"] != "invalid status; allowed: draft, open, closed, awarded, cancelled" {
 		t.Fatalf("error = %v", out["error"])
 	}
-	for _, st := range []string{"open", "closed", "awarded", "cancelled", "Open", " Closed "} {
+	for _, st := range []string{"draft", "open", "closed", "awarded", "cancelled", "Open", " Closed "} {
 		if !validRfqStatuses[strings.ToLower(strings.TrimSpace(st))] {
 			t.Errorf("%q should be an allowed RFQ status", st)
 		}
