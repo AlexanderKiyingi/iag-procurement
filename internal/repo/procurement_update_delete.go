@@ -239,12 +239,14 @@ func (p *Procurement) UpdateRequisition(
 	out := models.Requisition{}
 	if err := tx.QueryRow(ctx, `
 		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id,
-		       pm_requisition_id, pm_workspace_owner, budget_committed, pre_released, notes
+		       pm_requisition_id, pm_workspace_owner, budget_committed, pre_released, notes,
+		       origin_system, origin_ref
 		FROM requisitions WHERE id = $1`, id,
 	).Scan(
 		&out.ID, &out.Title, &out.Dept, &out.Requester, &out.Priority, &out.Status,
 		&createdAt, &needed, &out.Total, &out.Currency, &out.BudgetID,
 		&pmReqID, &pmOwner, &budgetCommitted, &preReleased, &out.Notes,
+		&out.OriginSystem, &out.OriginRef,
 	); err != nil {
 		return nil, err
 	}

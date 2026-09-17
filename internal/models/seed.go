@@ -71,6 +71,13 @@ type Requisition struct {
 	PMRequisitionID string `json:"pmRequisitionId,omitempty"`
 	// Notes is the requester's free text (migration 032).
 	Notes string `json:"notes"`
+	// OriginSystem and OriginRef name the request this requisition was raised
+	// from in another service — fleet, operations, project manager — and its
+	// reference there (migration 016). Stored by every intake consumer, never
+	// returned, so the procurement approver could not see that a requisition
+	// was fleet request FREQ-123.
+	OriginSystem string `json:"originSystem,omitempty"`
+	OriginRef    string `json:"originRef,omitempty"`
 }
 
 type Rfq struct {

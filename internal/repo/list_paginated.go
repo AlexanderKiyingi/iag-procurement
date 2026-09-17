@@ -109,7 +109,7 @@ func (p *Procurement) ListRequisitions(ctx context.Context, limit, offset int, q
 	}
 	rows, err := p.pool.Query(ctx, `
 		SELECT id, title, dept, requester, priority, status, created_at, needed_by, total, currency, budget_id,
-		       COALESCE(pm_requisition_id, ''), notes
+		       COALESCE(pm_requisition_id, ''), notes, origin_system, origin_ref
 		FROM requisitions `+where+`ORDER BY id LIMIT `+lp+` OFFSET `+op, args...)
 	if err != nil {
 		return nil, err
@@ -120,7 +120,8 @@ func (p *Procurement) ListRequisitions(ctx context.Context, limit, offset int, q
 		var r models.Requisition
 		var created, needed *time.Time
 		if err := rows.Scan(&r.ID, &r.Title, &r.Dept, &r.Requester, &r.Priority, &r.Status,
-			&created, &needed, &r.Total, &r.Currency, &r.BudgetID, &r.PMRequisitionID, &r.Notes); err != nil {
+			&created, &needed, &r.Total, &r.Currency, &r.BudgetID, &r.PMRequisitionID, &r.Notes,
+			&r.OriginSystem, &r.OriginRef); err != nil {
 			return nil, err
 		}
 		r.CreatedAt = dayStr(created)
