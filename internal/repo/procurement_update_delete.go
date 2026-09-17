@@ -179,13 +179,15 @@ func (p *Procurement) UpdateRequisition(
 		}
 	}
 
+	// Absent = leave alone, present-and-nil = clear, present = set. A single
+	// nullable parameter cannot carry all three (leave-alone and clear both
+	// arrive as SQL NULL), so the clear travels as an explicit flag.
+	setNeededByArg := neededBy != nil
 	var neededByArg interface{}
-	if neededBy == nil {
-		neededByArg = nil // no change
-	} else if *neededBy == nil {
-		neededByArg = (*time.Time)(nil) // clear
-	} else {
+	if neededBy != nil && *neededBy != nil {
 		neededByArg = **neededBy
+	} else {
+		neededByArg = (*time.Time)(nil)
 	}
 
 	tx, err := p.pool.Begin(ctx)
@@ -200,13 +202,13 @@ func (p *Procurement) UpdateRequisition(
 			dept = COALESCE($3, dept),
 			priority = COALESCE($4, priority),
 			status = COALESCE($5, status),
-			needed_by = CASE WHEN $6::date IS NULL THEN needed_by ELSE $6::date END,
+			needed_by = CASE WHEN $11::bool THEN $6::date ELSE needed_by END,
 			total = COALESCE($7, total),
 			currency = COALESCE($8, currency),
 			budget_id = COALESCE($9, budget_id),
 			notes = COALESCE($10, notes)
 		WHERE id = $1`,
-		id, title, dept, priority, status, neededByArg, total, currency, budgetID, trimPtr(notes),
+		id, title, dept, priority, status, neededByArg, total, currency, budgetID, trimPtr(notes), setNeededByArg,
 	)
 	if err != nil {
 		return nil, err

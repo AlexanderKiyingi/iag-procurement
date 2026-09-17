@@ -400,3 +400,89 @@ func TestFormFieldsRoundTripOnRequisitionContractAndLinks(t *testing.T) {
 		t.Fatal("paged rfq list dropped requisitionId")
 	}
 }
+
+// TestPresentAndEmptyClearsEveryDate pins the "present and empty clears"
+// contract every PATCH handler documents for its date fields.
+//
+// It was never true. Each UPDATE used `CASE WHEN $n::date IS NULL THEN col
+// ELSE $n::date END`, and "leave alone" and "clear" both arrive as SQL NULL,
+// so a clear was a silent no-op on every date column in the service. The
+// clear now travels as an explicit flag; this walks all seven columns.
+func TestPresentAndEmptyClearsEveryDate(t *testing.T) {
+	p, ctx := testProcurement(t)
+	actor := "tester-" + uuid.NewString()
+	vendorID, itemID, budgetID, _ := receivingFixture(t, p, ctx, 100)
+	day := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	var nilTime *time.Time
+	clear := &nilTime
+	keep := &day
+
+	// requisitions.needed_by
+	req, err := p.CreateRequisition(ctx, "Clear dates", "Ops", actor, "Medium", "", &day, 50, "USD", budgetID, "", actor)
+	if err != nil {
+		t.Fatalf("requisition: %v", err)
+	}
+	if req.NeededBy == "" {
+		t.Fatalf("fixture: neededBy not stored")
+	}
+	if r, err := p.UpdateRequisition(ctx, req.ID, nil, nil, nil, nil, nil, nil, clear, nil, nil, actor); err != nil || r.NeededBy != "" {
+		t.Fatalf("clear neededBy: err=%v neededBy=%q", err, r.NeededBy)
+	}
+	if r, err := p.UpdateRequisition(ctx, req.ID, nil, nil, nil, nil, nil, nil, &keep, nil, nil, actor); err != nil || r.NeededBy != "2026-10-01" {
+		t.Fatalf("set neededBy: err=%v neededBy=%q", err, r.NeededBy)
+	}
+
+	// rfqs.due_date
+	rfq, err := p.CreateRfq(ctx, "Clear dates", &day, []string{vendorID}, "", actor)
+	if err != nil {
+		t.Fatalf("rfq: %v", err)
+	}
+	if r, err := p.UpdateRfq(ctx, rfq.ID, nil, nil, clear, nil, nil, nil, actor); err != nil || r.DueDate != "" {
+		t.Fatalf("clear rfq dueDate: err=%v dueDate=%q", err, r.DueDate)
+	}
+
+	// contracts.start_date / end_date
+	c, err := p.CreateContract(ctx, vendorID, "Clear dates", &day, &day, 10, "USD", "", 0, actor)
+	if err != nil {
+		t.Fatalf("contract: %v", err)
+	}
+	if r, err := p.UpdateContract(ctx, c.ID, nil, nil, clear, nil, nil, nil, nil, nil, actor); err != nil || r.StartDate != "" || r.EndDate == "" {
+		t.Fatalf("clear startDate only: err=%v start=%q end=%q", err, r.StartDate, r.EndDate)
+	}
+	if r, err := p.UpdateContract(ctx, c.ID, nil, nil, nil, clear, nil, nil, nil, nil, actor); err != nil || r.EndDate != "" {
+		t.Fatalf("clear endDate: err=%v end=%q", err, r.EndDate)
+	}
+
+	// purchase_orders.expected_date
+	po, err := p.CreatePurchaseOrder(ctx, vendorID, "Clear dates", "USD", budgetID, "", &day,
+		[]models.PoLine{{ItemID: itemID, Qty: 1, Price: 10}}, actor)
+	if err != nil {
+		t.Fatalf("po: %v", err)
+	}
+	if r, err := p.UpdatePurchaseOrder(ctx, po.ID, nil, nil, nil, nil, clear, nil, nil, nil, actor); err != nil || r.ExpectedDate != "" {
+		t.Fatalf("clear expectedDate: err=%v expected=%q", err, r.ExpectedDate)
+	}
+
+	// grns.received_date — clearing leaves NULL; the create default is today.
+	grn, err := p.CreateGrn(ctx, vendorID, nil, actor, "Draft", &day, nil, false, "", "", "", actor)
+	if err != nil {
+		t.Fatalf("grn: %v", err)
+	}
+	if r, err := p.UpdateGrn(ctx, grn.ID, nil, nil, clear, nil, nil, nil, nil, nil, nil, nil, actor); err != nil || r.ReceivedDate != "" {
+		t.Fatalf("clear receivedDate: err=%v received=%q", err, r.ReceivedDate)
+	}
+
+	// invoices.invoice_date and due_date
+	inv, err := p.CreateInvoice(ctx, vendorID, nil, 10, "USD", &day, nil, "", &day, actor)
+	if err != nil {
+		t.Fatalf("invoice: %v", err)
+	}
+	if r, err := p.UpdateInvoice(ctx, inv.ID, nil, nil, nil, nil, nil, nil, nil, clear, nil, nil, actor); err != nil || r.InvoiceDate != "" || r.DueDate == "" {
+		t.Fatalf("clear invoiceDate only: err=%v invoiceDate=%q dueDate=%q", err, r.InvoiceDate, r.DueDate)
+	}
+	// And an update that never mentions a date leaves it alone.
+	title := "untouched"
+	if r, err := p.UpdateContract(ctx, c.ID, nil, &title, nil, nil, nil, nil, nil, nil, actor); err != nil || r.Title != title {
+		t.Fatalf("unrelated patch: err=%v %+v", err, r)
+	}
+}

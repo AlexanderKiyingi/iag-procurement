@@ -245,13 +245,15 @@ func (p *Procurement) UpdateRfq(
 		return nil, fmt.Errorf("%w: title is required", ErrInvalidArgument)
 	}
 
+	// Absent = leave alone, present-and-nil = clear, present = set. A single
+	// nullable parameter cannot carry all three (leave-alone and clear both
+	// arrive as SQL NULL), so the clear travels as an explicit flag.
+	setDueArg := dueDate != nil
 	var dueArg interface{}
-	if dueDate == nil {
-		dueArg = nil // no change
-	} else if *dueDate == nil {
-		dueArg = (*time.Time)(nil) // clear
-	} else {
+	if dueDate != nil && *dueDate != nil {
 		dueArg = **dueDate
+	} else {
+		dueArg = (*time.Time)(nil)
 	}
 	var winnerArg interface{}
 	if winnerVendorID == nil {
@@ -284,12 +286,12 @@ func (p *Procurement) UpdateRfq(
 		UPDATE rfqs SET
 			title = COALESCE($2, title),
 			status = COALESCE($3, status),
-			due_date = CASE WHEN $4::date IS NULL THEN due_date ELSE $4::date END,
-			winner_vendor_id = CASE WHEN $5::text IS NULL THEN winner_vendor_id ELSE $5::text END,
+			due_date = CASE WHEN $8::bool THEN $4::date ELSE due_date END,
+			winner_vendor_id = CASE WHEN $5::text IS NULL THEN winner_vendor_id ELSE NULLIF($5::text, '')::uuid END,
 			invited_vendor_ids = CASE WHEN $6::uuid[] IS NULL THEN invited_vendor_ids ELSE $6::uuid[] END,
 			requisition_id = CASE WHEN $7::text IS NULL THEN requisition_id ELSE NULLIF($7::text, '')::uuid END
 		WHERE id = $1`,
-		id, title, status, dueArg, winnerArg, invitedArg, reqArg,
+		id, title, status, dueArg, winnerArg, invitedArg, reqArg, setDueArg,
 	)
 	if err != nil {
 		return nil, err
@@ -380,21 +382,25 @@ func (p *Procurement) UpdateContract(
 	if title != nil && strings.TrimSpace(*title) == "" {
 		return nil, fmt.Errorf("%w: title is required", ErrInvalidArgument)
 	}
+	// Absent = leave alone, present-and-nil = clear, present = set. A single
+	// nullable parameter cannot carry all three (leave-alone and clear both
+	// arrive as SQL NULL), so the clear travels as an explicit flag.
+	setSdArg := startDate != nil
 	var sdArg interface{}
-	if startDate == nil {
-		sdArg = nil
-	} else if *startDate == nil {
-		sdArg = (*time.Time)(nil)
-	} else {
+	if startDate != nil && *startDate != nil {
 		sdArg = **startDate
-	}
-	var edArg interface{}
-	if endDate == nil {
-		edArg = nil
-	} else if *endDate == nil {
-		edArg = (*time.Time)(nil)
 	} else {
+		sdArg = (*time.Time)(nil)
+	}
+	// Absent = leave alone, present-and-nil = clear, present = set. A single
+	// nullable parameter cannot carry all three (leave-alone and clear both
+	// arrive as SQL NULL), so the clear travels as an explicit flag.
+	setEdArg := endDate != nil
+	var edArg interface{}
+	if endDate != nil && *endDate != nil {
 		edArg = **endDate
+	} else {
+		edArg = (*time.Time)(nil)
 	}
 
 	tx, err := p.pool.Begin(ctx)
@@ -407,14 +413,14 @@ func (p *Procurement) UpdateContract(
 		UPDATE contracts SET
 			vendor_id = COALESCE($2, vendor_id),
 			title = COALESCE($3, title),
-			start_date = CASE WHEN $4::date IS NULL THEN start_date ELSE $4::date END,
-			end_date = CASE WHEN $5::date IS NULL THEN end_date ELSE $5::date END,
+			start_date = CASE WHEN $10::bool THEN $4::date ELSE start_date END,
+			end_date = CASE WHEN $11::bool THEN $5::date ELSE end_date END,
 			value = COALESCE($6, value),
 			currency = COALESCE($7, currency),
 			status = COALESCE($8, status),
 			committed_volume = COALESCE($9, committed_volume)
 		WHERE id = $1`,
-		id, vendorID, title, sdArg, edArg, value, currency, status, committedVolume,
+		id, vendorID, title, sdArg, edArg, value, currency, status, committedVolume, setSdArg, setEdArg,
 	)
 	if err != nil {
 		return nil, err
@@ -519,21 +525,26 @@ func (p *Procurement) UpdateInvoice(
 		s := strings.TrimSpace(*poID)
 		poArg = s
 	}
+	// Absent = leave alone, present-and-nil = clear, present = set. A single
+	// nullable parameter cannot carry all three (leave-alone and clear both
+	// arrive as SQL NULL), so the clear travels as an explicit flag.
+	setDateArg := invoiceDate != nil
 	var dateArg interface{}
-	if invoiceDate == nil {
-		dateArg = nil
-	} else if *invoiceDate == nil {
-		dateArg = (*time.Time)(nil)
-	} else {
+	if invoiceDate != nil && *invoiceDate != nil {
 		dateArg = **invoiceDate
-	}
-	var dueArg interface{}
-	if dueDate == nil {
-		dueArg = nil
-	} else if *dueDate == nil {
-		dueArg = (*time.Time)(nil)
 	} else {
+		dateArg = (*time.Time)(nil)
+	}
+	// Three states: absent (leave alone), present-and-nil (clear), present
+	// (set). A single nullable parameter cannot carry all three — "leave
+	// alone" and "clear" both arrive as SQL NULL — so the clear travels as an
+	// explicit flag alongside the value.
+	setDue := dueDate != nil
+	var dueArg interface{}
+	if dueDate != nil && *dueDate != nil {
 		dueArg = **dueDate
+	} else {
+		dueArg = (*time.Time)(nil)
 	}
 	var resolutionArg *string
 	if varianceResolution != nil {
@@ -551,16 +562,16 @@ func (p *Procurement) UpdateInvoice(
 		UPDATE invoices SET
 			invoice_no = CASE WHEN $2::text IS NULL THEN invoice_no ELSE $2::text END,
 			vendor_id = COALESCE($3, vendor_id),
-			po_id = CASE WHEN $4::text IS NULL THEN po_id ELSE $4::text END,
+			po_id = CASE WHEN $4::text IS NULL THEN po_id ELSE NULLIF($4::text, '')::uuid END,
 			amount = COALESCE($5, amount),
 			currency = COALESCE($6, currency),
 			status = COALESCE($7, status),
 			match_status = COALESCE($8, match_status),
-			invoice_date = CASE WHEN $9::date IS NULL THEN invoice_date ELSE $9::date END,
+			invoice_date = CASE WHEN $13::bool THEN $9::date ELSE invoice_date END,
 			variance_resolution = COALESCE($10, variance_resolution),
-			due_date = CASE WHEN $11::date IS NULL THEN due_date ELSE $11::date END
+			due_date = CASE WHEN $12::bool THEN $11::date ELSE due_date END
 		WHERE id = $1`,
-		id, invNoArg, vendorID, poArg, amount, currency, status, matchStatus, dateArg, resolutionArg, dueArg,
+		id, invNoArg, vendorID, poArg, amount, currency, status, matchStatus, dateArg, resolutionArg, dueArg, setDue, setDateArg,
 	)
 	if err != nil {
 		return nil, err
@@ -661,13 +672,15 @@ func (p *Procurement) UpdatePurchaseOrder(
 		return nil, fmt.Errorf("%w: at least one line item is required", ErrInvalidArgument)
 	}
 
+	// Absent = leave alone, present-and-nil = clear, present = set. A single
+	// nullable parameter cannot carry all three (leave-alone and clear both
+	// arrive as SQL NULL), so the clear travels as an explicit flag.
+	setExArg := expectedDate != nil
 	var exArg interface{}
-	if expectedDate == nil {
-		exArg = nil
-	} else if *expectedDate == nil {
-		exArg = (*time.Time)(nil)
-	} else {
+	if expectedDate != nil && *expectedDate != nil {
 		exArg = **expectedDate
+	} else {
+		exArg = (*time.Time)(nil)
 	}
 	var reqArg interface{}
 	if requisitionID != nil {
@@ -737,11 +750,11 @@ func (p *Procurement) UpdatePurchaseOrder(
 			total = COALESCE($4, total),
 			currency = COALESCE($5, currency),
 			status = COALESCE($6, status),
-			expected_date = CASE WHEN $7::date IS NULL THEN expected_date ELSE $7::date END,
+			expected_date = CASE WHEN $10::bool THEN $7::date ELSE expected_date END,
 			budget_id = COALESCE($8, budget_id),
 			requisition_id = CASE WHEN $9::text IS NULL THEN requisition_id ELSE NULLIF($9::text, '')::uuid END
 		WHERE id = $1`,
-		id, vendorID, title, totalPtr, currency, status, exArg, budgetID, reqArg,
+		id, vendorID, title, totalPtr, currency, status, exArg, budgetID, reqArg, setExArg,
 	)
 	if err != nil {
 		return nil, err
@@ -952,13 +965,15 @@ func (p *Procurement) UpdateGrn(
 		s := strings.TrimSpace(*poID)
 		poArg = s
 	}
+	// Absent = leave alone, present-and-nil = clear, present = set. A single
+	// nullable parameter cannot carry all three (leave-alone and clear both
+	// arrive as SQL NULL), so the clear travels as an explicit flag.
+	setRdArg := receivedDate != nil
 	var rdArg interface{}
-	if receivedDate == nil {
-		rdArg = nil
-	} else if *receivedDate == nil {
-		rdArg = (*time.Time)(nil)
-	} else {
+	if receivedDate != nil && *receivedDate != nil {
 		rdArg = **receivedDate
+	} else {
+		rdArg = (*time.Time)(nil)
 	}
 
 	tx, err := p.pool.Begin(ctx)
@@ -969,9 +984,9 @@ func (p *Procurement) UpdateGrn(
 
 	ct, err := tx.Exec(ctx, `
 		UPDATE grns SET
-			po_id = CASE WHEN $2::text IS NULL THEN po_id ELSE $2::text END,
+			po_id = CASE WHEN $2::text IS NULL THEN po_id ELSE NULLIF($2::text, '')::uuid END,
 			vendor_id = COALESCE($3, vendor_id),
-			received_date = CASE WHEN $4::date IS NULL THEN received_date ELSE $4::date END,
+			received_date = CASE WHEN $11::bool THEN $4::date ELSE received_date END,
 			received_by = COALESCE($5, received_by),
 			status = COALESCE($6, status),
 			quality_critical = COALESCE($7, quality_critical),
@@ -979,7 +994,7 @@ func (p *Procurement) UpdateGrn(
 			warehouse = COALESCE($9, warehouse),
 			notes = COALESCE($10, notes)
 		WHERE id = $1`,
-		id, poArg, vendorID, rdArg, receivedBy, status, qualityCritical, trimPtr(qcStatus), trimPtr(warehouse), trimPtr(notes),
+		id, poArg, vendorID, rdArg, receivedBy, status, qualityCritical, trimPtr(qcStatus), trimPtr(warehouse), trimPtr(notes), setRdArg,
 	)
 	if err != nil {
 		return nil, err
