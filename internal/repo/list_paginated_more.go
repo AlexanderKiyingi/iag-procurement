@@ -60,7 +60,7 @@ func (p *Procurement) ListRfqs(ctx context.Context, limit, offset int, q string)
 	args, sp, lp, op := pageArgs(q, limit, offset)
 	where := ""
 	if sp != "" {
-		where = "WHERE id ILIKE " + sp + " OR title ILIKE " + sp + " OR status ILIKE " + sp + " "
+		where = "WHERE id::text ILIKE " + sp + " OR title ILIKE " + sp + " OR status ILIKE " + sp + " "
 	}
 	rows, err := p.pool.Query(ctx, `
 		SELECT id, title, status, due_date, created_at, winner_vendor_id, invited_vendor_ids, COALESCE(requisition_id::text, '')
@@ -94,7 +94,7 @@ func (p *Procurement) ListGrns(ctx context.Context, limit, offset int, q string)
 	args, sp, lp, op := pageArgs(q, limit, offset)
 	where := ""
 	if sp != "" {
-		where = "WHERE id ILIKE " + sp + " OR vendor_id ILIKE " + sp + " OR received_by ILIKE " + sp +
+		where = "WHERE id::text ILIKE " + sp + " OR COALESCE(vendor_id::text,'') ILIKE " + sp + " OR received_by ILIKE " + sp +
 			" OR status ILIKE " + sp + " "
 	}
 	rows, err := p.pool.Query(ctx, `
@@ -159,7 +159,7 @@ func (p *Procurement) ListContracts(ctx context.Context, limit, offset int, q st
 	args, sp, lp, op := pageArgs(q, limit, offset)
 	where := ""
 	if sp != "" {
-		where = "WHERE id ILIKE " + sp + " OR title ILIKE " + sp + " OR vendor_id ILIKE " + sp +
+		where = "WHERE id::text ILIKE " + sp + " OR title ILIKE " + sp + " OR COALESCE(vendor_id::text,'') ILIKE " + sp +
 			" OR status ILIKE " + sp + " "
 	}
 	rows, err := p.pool.Query(ctx, `
@@ -189,7 +189,7 @@ func (p *Procurement) ListPayments(ctx context.Context, limit, offset int, q str
 	args, sp, lp, op := pageArgs(q, limit, offset)
 	where := ""
 	if sp != "" {
-		where = "WHERE id ILIKE " + sp + " OR COALESCE(reference,'') ILIKE " + sp + " OR vendor_id ILIKE " + sp +
+		where = "WHERE id::text ILIKE " + sp + " OR COALESCE(reference,'') ILIKE " + sp + " OR COALESCE(vendor_id::text,'') ILIKE " + sp +
 			" OR COALESCE(invoice_id::text,'') ILIKE " + sp + " OR status ILIKE " + sp + " "
 	}
 	rows, err := p.pool.Query(ctx, `

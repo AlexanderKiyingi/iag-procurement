@@ -486,3 +486,35 @@ func TestPresentAndEmptyClearsEveryDate(t *testing.T) {
 		t.Fatalf("unrelated patch: err=%v %+v", err, r)
 	}
 }
+
+// TestListSearchWorksOnUUIDKeyedTables pins ?q= on every paged list.
+//
+// Migration 027 retyped id and vendor_id to uuid; the search clauses still
+// said `id ILIKE $1`, which Postgres refuses ("operator does not exist: uuid
+// ~~* unknown"). Every q= search on RFQs, orders, receipts, invoices,
+// contracts and payments answered 500. The app's own lists never send q, so
+// nothing noticed until the live run did.
+func TestListSearchWorksOnUUIDKeyedTables(t *testing.T) {
+	p, ctx := testProcurement(t)
+	if _, err := p.ListRfqs(ctx, 10, 0, "QA"); err != nil {
+		t.Errorf("rfqs q=: %v", err)
+	}
+	if _, err := p.ListPurchaseOrders(ctx, 10, 0, "QA"); err != nil {
+		t.Errorf("purchase orders q=: %v", err)
+	}
+	if _, err := p.ListGrns(ctx, 10, 0, "QA"); err != nil {
+		t.Errorf("grns q=: %v", err)
+	}
+	if _, err := p.ListInvoices(ctx, 10, 0, "QA"); err != nil {
+		t.Errorf("invoices q=: %v", err)
+	}
+	if _, err := p.ListContracts(ctx, 10, 0, "QA"); err != nil {
+		t.Errorf("contracts q=: %v", err)
+	}
+	if _, err := p.ListPayments(ctx, 10, 0, "QA"); err != nil {
+		t.Errorf("payments q=: %v", err)
+	}
+	if _, err := p.ListVendors(ctx, 10, 0, "QA"); err != nil {
+		t.Errorf("vendors q=: %v", err)
+	}
+}

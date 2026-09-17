@@ -136,7 +136,7 @@ func (p *Procurement) ListPurchaseOrders(ctx context.Context, limit, offset int,
 	args, sp, lp, op := pageArgs(q, limit, offset)
 	where := ""
 	if sp != "" {
-		where = "WHERE id ILIKE " + sp + " OR title ILIKE " + sp + " OR vendor_id ILIKE " + sp + " OR status ILIKE " + sp + " "
+		where = "WHERE id::text ILIKE " + sp + " OR title ILIKE " + sp + " OR COALESCE(vendor_id::text,'') ILIKE " + sp + " OR status ILIKE " + sp + " "
 	}
 	rows, err := p.pool.Query(ctx, `
 		SELECT id, vendor_id, title, total, currency, status, created_at, expected_date, COALESCE(budget_id::text, ''),
@@ -246,7 +246,7 @@ func (p *Procurement) ListInvoices(ctx context.Context, limit, offset int, q str
 	args, sp, lp, op := pageArgs(q, limit, offset)
 	where := ""
 	if sp != "" {
-		where = "WHERE COALESCE(invoice_no,'') ILIKE " + sp + " OR id ILIKE " + sp + " OR vendor_id ILIKE " + sp +
+		where = "WHERE COALESCE(invoice_no,'') ILIKE " + sp + " OR id::text ILIKE " + sp + " OR COALESCE(vendor_id::text,'') ILIKE " + sp +
 			" OR status ILIKE " + sp + " OR match_status ILIKE " + sp + " "
 	}
 	rows, err := p.pool.Query(ctx, `
