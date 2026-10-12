@@ -170,6 +170,12 @@ func (p *Procurement) CreatePurchaseOrder(ctx context.Context, vendorID, title, 
 	}
 	defer tx.Rollback(ctx)
 
+	if suspended, err := supplierSuspended(ctx, tx, vendorID); err != nil {
+		return nil, err
+	} else if suspended {
+		return nil, ErrSupplierSuspended
+	}
+
 	var id string
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO purchase_orders (doc_no, vendor_id, title, total, currency, status, created_at, expected_date, budget_id, requisition_id, created_by)

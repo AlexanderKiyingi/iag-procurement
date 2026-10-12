@@ -77,15 +77,18 @@ func (p *Procurement) UpdateVendor(
 
 	var out models.Vendor
 	var partyID string
+	var qcReasons []byte
 	if err := tx.QueryRow(ctx, `
-		SELECT id, name, logo, category, contact, email, phone, country, terms, rating, status, total_spend, open_pos, COALESCE(party_id::text,'')
+		SELECT id, name, logo, category, contact, email, phone, country, terms, rating, status, total_spend, open_pos, COALESCE(party_id::text,''),
+		       `+vendorQualityCols+`
 		FROM vendors WHERE id = $1`, id,
-	).Scan(
+	).Scan(append([]any{
 		&out.ID, &out.Name, &out.Logo, &out.Category, &out.Contact, &out.Email, &out.Phone, &out.Country, &out.Terms,
 		&out.Rating, &out.Status, &out.TotalSpend, &out.OpenPOs, &partyID,
-	); err != nil {
+	}, vendorQualityDest(&out, &qcReasons)...)...); err != nil {
 		return nil, err
 	}
+	finishVendorQuality(&out, qcReasons)
 
 	if err := p.enqueueVendorUpsertedTx(ctx, tx, events.VendorUpsert{
 		PartyID: partyID, Code: out.ID, Name: out.Name, Category: out.Category,

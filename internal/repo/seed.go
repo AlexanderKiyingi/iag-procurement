@@ -34,17 +34,20 @@ func (s *Seed) Load(ctx context.Context) (*models.SeedData, error) {
 
 	{
 		rows, err := s.pool.Query(ctx, `
-		SELECT id, name, logo, category, contact, email, phone, country, terms, rating, status, total_spend, open_pos
+		SELECT id, name, logo, category, contact, email, phone, country, terms, rating, status, total_spend, open_pos,
+		       `+vendorQualityCols+`
 		FROM vendors ORDER BY id`)
 		if err != nil {
 			return nil, fmt.Errorf("vendors: %w", err)
 		}
 		for rows.Next() {
 			var v models.Vendor
-			if err := rows.Scan(&v.ID, &v.Name, &v.Logo, &v.Category, &v.Contact, &v.Email, &v.Phone, &v.Country, &v.Terms, &v.Rating, &v.Status, &v.TotalSpend, &v.OpenPOs); err != nil {
+			var reasons []byte
+			if err := rows.Scan(append([]any{&v.ID, &v.Name, &v.Logo, &v.Category, &v.Contact, &v.Email, &v.Phone, &v.Country, &v.Terms, &v.Rating, &v.Status, &v.TotalSpend, &v.OpenPOs}, vendorQualityDest(&v, &reasons)...)...); err != nil {
 				rows.Close()
 				return nil, err
 			}
+			finishVendorQuality(&v, reasons)
 			out.Vendors = append(out.Vendors, v)
 		}
 		if err := rows.Err(); err != nil {

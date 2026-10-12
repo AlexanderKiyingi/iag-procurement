@@ -763,8 +763,14 @@ func (p *Procurement) UpdatePurchaseOrder(
 		return nil, ErrNotFound
 	}
 
-	// Adjust vendor open_pos if vendor changed.
+	// Adjust vendor open_pos if vendor changed — and refuse moving an order
+	// to a supplier procurement has suspended for quality.
 	if newVendor != curVendor {
+		if suspended, err := supplierSuspended(ctx, tx, newVendor); err != nil {
+			return nil, err
+		} else if suspended {
+			return nil, ErrSupplierSuspended
+		}
 		if _, err := tx.Exec(ctx, `UPDATE vendors SET open_pos = GREATEST(open_pos - 1, 0) WHERE id = $1`, curVendor); err != nil {
 			return nil, err
 		}

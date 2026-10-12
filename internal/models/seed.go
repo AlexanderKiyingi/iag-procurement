@@ -18,6 +18,13 @@ type Vendor struct {
 	Status     string  `json:"status"`
 	TotalSpend float64 `json:"totalSpend"`
 	OpenPOs    int     `json:"openPOs"`
+	// Migration 033: procurement's quality decision, and quality's advice.
+	QualityStatus       string   `json:"qualityStatus"`
+	QualityStatusReason string   `json:"qualityStatusReason"`
+	QCRecommendation    string   `json:"qcRecommendation"`
+	QCAcceptanceRate    *float64 `json:"qcAcceptanceRate,omitempty"`
+	QCReasons           []string `json:"qcReasons"`
+	QCRecommendedAt     string   `json:"qcRecommendedAt,omitempty"`
 }
 
 type Item struct {

@@ -295,6 +295,19 @@ func main() {
 			}
 		}()
 		log.Printf("event bus: consuming %s as group %s (vendor master sync)", cfg.KafkaFinanceTopic, cfg.KafkaVendorSyncGroup)
+
+		// Supplier quality advice from quality-control (qc.supplier.scorecard).
+		qualityConsumer := consumer.NewQualityAdvice(consumer.Config{
+			Brokers: cfg.KafkaBrokers,
+			GroupID: cfg.KafkaQualityGroup,
+			Topic:   cfg.KafkaQualityTopic,
+		}, procurementRepo)
+		go func() {
+			if err := qualityConsumer.Run(workerCtx); err != nil && workerCtx.Err() == nil {
+				log.Printf("quality-advice consumer stopped: %v", err)
+			}
+		}()
+		log.Printf("event bus: consuming %s as group %s (supplier quality advice)", cfg.KafkaQualityTopic, cfg.KafkaQualityGroup)
 	} else {
 		log.Printf("event bus: disabled (set EVENT_BUS_ENABLED=true and KAFKA_BROKERS)")
 	}
