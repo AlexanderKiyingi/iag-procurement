@@ -42,7 +42,8 @@ func (p *Procurement) ListVendors(ctx context.Context, limit, offset int, q stri
 		where = "WHERE name ILIKE " + sp + " OR category ILIKE " + sp + " OR country ILIKE " + sp + " OR email ILIKE " + sp + " "
 	}
 	rows, err := p.pool.Query(ctx, `
-		SELECT id, name, logo, category, contact, email, phone, country, terms, rating, status, total_spend, open_pos
+		SELECT id, name, logo, category, contact, email, phone, country, terms, rating, status, total_spend, open_pos,
+		       `+vendorQualityCols+`
 		FROM vendors `+where+`ORDER BY id LIMIT `+lp+` OFFSET `+op, args...)
 	if err != nil {
 		return nil, err
@@ -51,10 +52,12 @@ func (p *Procurement) ListVendors(ctx context.Context, limit, offset int, q stri
 	out := []models.Vendor{}
 	for rows.Next() {
 		var v models.Vendor
-		if err := rows.Scan(&v.ID, &v.Name, &v.Logo, &v.Category, &v.Contact, &v.Email, &v.Phone,
-			&v.Country, &v.Terms, &v.Rating, &v.Status, &v.TotalSpend, &v.OpenPOs); err != nil {
+		var reasons []byte
+		if err := rows.Scan(append([]any{&v.ID, &v.Name, &v.Logo, &v.Category, &v.Contact, &v.Email, &v.Phone,
+			&v.Country, &v.Terms, &v.Rating, &v.Status, &v.TotalSpend, &v.OpenPOs}, vendorQualityDest(&v, &reasons)...)...); err != nil {
 			return nil, err
 		}
+		finishVendorQuality(&v, reasons)
 		out = append(out, v)
 	}
 	return out, rows.Err()

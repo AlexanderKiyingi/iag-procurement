@@ -57,6 +57,9 @@ type Config struct {
 	KafkaFleetGroup       string
 	KafkaFinanceGroup     string
 	KafkaVendorSyncGroup  string
+	// KafkaQualityTopic / Group: quality-control's qc.supplier.scorecard.
+	KafkaQualityTopic string
+	KafkaQualityGroup string
 
 	// FinancePaymentWritebackEnabled subscribes procurement to iag.finance and
 	// reflects finance.payment.made (AP) settlements back onto the originating
@@ -192,6 +195,8 @@ func Load() (*Config, error) {
 		KafkaFleetGroup:       getenv("KAFKA_FLEET_GROUP", "iag.procurement.fleet"),
 		KafkaFinanceGroup:     getenv("KAFKA_FINANCE_GROUP", "iag.procurement.finance"),
 		KafkaVendorSyncGroup:  getenv("KAFKA_VENDOR_SYNC_GROUP", "iag.procurement.vendor-sync"),
+		KafkaQualityTopic:     getenv("KAFKA_QUALITY_TOPIC", "iag.quality"),
+		KafkaQualityGroup:     getenv("KAFKA_QUALITY_GROUP", "iag.procurement.quality"),
 
 		FleetFuelBridgeEnabled:         strings.EqualFold(os.Getenv("PROCUREMENT_FLEET_FUEL_BRIDGE_ENABLED"), "true"),
 		FinancePaymentWritebackEnabled: strings.EqualFold(os.Getenv("PROCUREMENT_FINANCE_PAYMENT_WRITEBACK_ENABLED"), "true"),

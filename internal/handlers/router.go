@@ -172,6 +172,7 @@ func (a *API) Mount(r *gin.Engine) {
 			mut.DELETE("/purchase-orders/:id", middleware.RequirePermission(rbac.DeletePurchaseOrder), a.deletePurchaseOrder)
 			mut.POST("/vendors", middleware.RequirePermission(rbac.AddVendor), a.postVendor)
 			mut.PATCH("/vendors/:id", middleware.RequirePermission(rbac.ChangeVendor), a.patchVendor)
+			mut.PATCH("/vendors/:id/quality-status", middleware.RequirePermission(rbac.ChangeVendor), a.patchVendorQualityStatus)
 			mut.DELETE("/vendors/:id", middleware.RequirePermission(rbac.DeleteVendor), a.deleteVendor)
 			mut.POST("/items", middleware.RequirePermission(rbac.AddItem), a.postItem)
 			mut.PATCH("/items/:id", middleware.RequirePermission(rbac.ChangeItem), a.patchItem)
