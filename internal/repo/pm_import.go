@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -46,8 +47,8 @@ func (p *Procurement) ImportPMRequisition(
 	if status == "" {
 		status = "Pending Approval"
 	}
-	if budgetID == "" {
-		budgetID = "BDG-2026-UT"
+	if strings.TrimSpace(budgetID) == "" {
+		return nil, ErrNoBudget
 	}
 
 	docNo := newDocNo("PR-2026")
@@ -142,7 +143,19 @@ func (p *Procurement) GetPMLink(ctx context.Context, requisitionID string) (PMLi
 	return link, nil
 }
 
-// ResolveBudgetForDept picks a seeded budget id matching dept name (fallback BDG-2026-UT).
+// ErrNoBudget means no budget could be found for an imported request's
+// department and no default is configured. The request cannot be stored —
+// requisitions.budget_id references budgets(id), and approval reads it — so
+// the consumer drops the event with this reason instead of retrying it.
+var ErrNoBudget = errors.New("no budget matches the department and PROCUREMENT_DEFAULT_BUDGET_ID is not set")
+
+// ResolveBudgetForDept picks the budget an imported request is charged to:
+// the first whose dept matches, else PROCUREMENT_DEFAULT_BUDGET_ID when it
+// names a real budget, else ErrNoBudget.
+//
+// It used to fall back to the literal "BDG-2026-UT". Since 027 budget ids
+// are UUIDs, so that value failed the insert's cast and every unmatched
+// import errored and was retried on each restart, for ever.
 func (p *Procurement) ResolveBudgetForDept(ctx context.Context, dept string) (string, error) {
 	dept = strings.TrimSpace(dept)
 	var id string
@@ -159,5 +172,15 @@ func (p *Procurement) ResolveBudgetForDept(ctx context.Context, dept string) (st
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", err
 	}
-	return "BDG-2026-UT", nil
+	if def := strings.TrimSpace(os.Getenv("PROCUREMENT_DEFAULT_BUDGET_ID")); def != "" {
+		var found string
+		err := p.pool.QueryRow(ctx, `SELECT id::text FROM budgets WHERE id::text = $1`, def).Scan(&found)
+		if err == nil {
+			return found, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return "", err
+		}
+	}
+	return "", ErrNoBudget
 }

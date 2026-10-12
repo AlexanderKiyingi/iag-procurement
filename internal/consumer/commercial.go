@@ -246,6 +246,11 @@ func (c *Commercial) handleGovRequisitionApproved(ctx context.Context, evt Platf
 	}
 	dept := strings.TrimSpace(data.Department)
 	budgetID, err := c.procurement.ResolveBudgetForDept(ctx, dept)
+	if errors.Is(err, repo.ErrNoBudget) {
+		// Permanent: retrying cannot create a budget. Dropped with the reason.
+		log.Printf("procurement: dropping request for dept %q: %v", dept, err)
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -300,6 +305,11 @@ func (c *Commercial) handlePMPurchaseRequisition(ctx context.Context, evt Platfo
 
 	dept := strings.TrimSpace(data.Dept)
 	budgetID, err := c.procurement.ResolveBudgetForDept(ctx, dept)
+	if errors.Is(err, repo.ErrNoBudget) {
+		// Permanent: retrying cannot create a budget. Dropped with the reason.
+		log.Printf("procurement: dropping request for dept %q: %v", dept, err)
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -364,6 +374,11 @@ func (c *Commercial) handlePMRequisition(ctx context.Context, evt PlatformEvent)
 
 	dept := strings.TrimSpace(data.ForDept)
 	budgetID, err := c.procurement.ResolveBudgetForDept(ctx, dept)
+	if errors.Is(err, repo.ErrNoBudget) {
+		// Permanent: retrying cannot create a budget. Dropped with the reason.
+		log.Printf("procurement: dropping request for dept %q: %v", dept, err)
+		return nil
+	}
 	if err != nil {
 		return err
 	}

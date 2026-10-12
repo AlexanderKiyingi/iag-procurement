@@ -126,6 +126,11 @@ func (c *Fleet) handleFuelRequestApproved(ctx context.Context, eventID string, r
 	total, _ := strconv.ParseFloat(strings.TrimSpace(d.EstTotal), 64)
 	dept := strings.TrimSpace(d.Dept)
 	budgetID, err := c.repo.ResolveBudgetForDept(ctx, dept)
+	if errors.Is(err, repo.ErrNoBudget) {
+		// Permanent: retrying cannot create a budget. Dropped with the reason.
+		log.Printf("procurement: dropping request for dept %q: %v", dept, err)
+		return nil
+	}
 	if err != nil {
 		return err
 	}

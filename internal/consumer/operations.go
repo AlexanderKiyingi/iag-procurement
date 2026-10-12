@@ -134,6 +134,11 @@ func (c *Operations) handleProcurementRequest(ctx context.Context, eventID, sour
 	total, _ := strconv.ParseFloat(strings.TrimSpace(d.Amount), 64)
 	dept := strings.TrimSpace(d.Department)
 	budgetID, err := c.repo.ResolveBudgetForDept(ctx, dept)
+	if errors.Is(err, repo.ErrNoBudget) {
+		// Permanent: retrying cannot create a budget. Dropped with the reason.
+		log.Printf("procurement: dropping request for dept %q: %v", dept, err)
+		return nil
+	}
 	if err != nil {
 		return err
 	}
