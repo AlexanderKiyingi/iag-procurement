@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strconv"
 	"sync"
+	"time"
 
 	"iag-procurement/backend/internal/events"
 	"iag-procurement/backend/internal/notifyclient"
@@ -32,6 +33,9 @@ func NewService(store *Store, notify notifyclient.Dispatcher) *Service {
 }
 
 // List returns recent in-app notifications.
+// alertRetryDelay spaces the single retry of a failed alert dispatch.
+var alertRetryDelay = 2 * time.Second
+
 func (s *Service) List(ctx context.Context, limit int) ([]Row, error) {
 	return s.store.List(ctx, limit)
 }
@@ -160,14 +164,26 @@ func (s *Service) EnqueueAlertEmail(ctx context.Context, p AlertJobPayload) erro
 			// dedupes on (eventId, channel, recipient), so each address gets
 			// its own delivery while a retry of this same alert does not
 			// duplicate any of them.
-			if _, err := s.notify.Dispatch(ctx, notifyclient.DispatchRequest{
+			req := notifyclient.DispatchRequest{
 				Channel:    "email",
 				Recipient:  to,
 				Audience:   p.Audience,
 				TemplateID: "procurement.alert",
 				Variables:  variables,
 				EventID:    eventID,
-			}); err != nil {
+			}
+			// One retry: a failed dispatch used to be logged and dropped. The
+			// stable event id makes the retry safe — if the first attempt did
+			// reach the service, the second is reported as a duplicate.
+			_, err := s.notify.Dispatch(ctx, req)
+			if err != nil && ctx.Err() == nil {
+				select {
+				case <-ctx.Done():
+				case <-time.After(alertRetryDelay):
+					_, err = s.notify.Dispatch(ctx, req)
+				}
+			}
+			if err != nil {
 				slog.WarnContext(ctx, "procurement.alert dispatch failed",
 					"recipient", to,
 					"audience", p.Audience,
