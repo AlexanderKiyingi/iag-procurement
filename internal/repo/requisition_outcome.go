@@ -51,7 +51,7 @@ func (p *Procurement) applyBudgetCommitment(ctx context.Context, tx pgx.Tx, reqI
 		}
 		// Lock the envelope and refuse to approve when the requisition would
 		// overcommit it. allocated - pre_committed - committed - spent is the
-		// headroom across all three stages.
+		// hard gate (finance GET /reports/budget-availability is advisory only).
 		var allocated, preCommitted, committed, spent float64
 		err := tx.QueryRow(ctx, `
 			SELECT allocated, pre_committed, committed, spent FROM budgets WHERE id = $1 FOR UPDATE`,
@@ -76,8 +76,10 @@ func (p *Procurement) applyBudgetCommitment(ctx context.Context, tx pgx.Tx, reqI
 			WHERE id = $1`, budgetID, total); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE requisitions SET budget_committed = TRUE WHERE id = $1`, reqID)
-		return err
+		if _, err := tx.Exec(ctx, `UPDATE requisitions SET budget_committed = TRUE WHERE id = $1`, reqID); err != nil {
+			return err
+		}
+		return p.enqueueBudgetCommitmentSnapshot(ctx, tx, budgetID)
 	case "rejected":
 		if !alreadyCommitted || preReleased {
 			// Never pre-encumbered, or already liquidated by a PO: nothing to
@@ -95,8 +97,10 @@ func (p *Procurement) applyBudgetCommitment(ctx context.Context, tx pgx.Tx, reqI
 			WHERE id = $1`, budgetID, total); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `UPDATE requisitions SET budget_committed = FALSE WHERE id = $1`, reqID)
-		return err
+		if _, err := tx.Exec(ctx, `UPDATE requisitions SET budget_committed = FALSE WHERE id = $1`, reqID); err != nil {
+			return err
+		}
+		return p.enqueueBudgetCommitmentSnapshot(ctx, tx, budgetID)
 	}
 	return nil
 }
@@ -157,6 +161,9 @@ func (p *Procurement) applyPOEncumbrance(ctx context.Context, tx pgx.Tx, poID, b
 			if _, err := tx.Exec(ctx, `UPDATE requisitions SET pre_released = TRUE WHERE id = $1`, rid); err != nil {
 				return err
 			}
+			if err := p.enqueueBudgetCommitmentSnapshot(ctx, tx, reqBudget); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -184,8 +191,10 @@ func (p *Procurement) applyPOEncumbrance(ctx context.Context, tx pgx.Tx, poID, b
 		WHERE id = $1`, budgetID, poTotal); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE purchase_orders SET budget_committed = TRUE WHERE id = $1`, poID)
-	return err
+	if _, err := tx.Exec(ctx, `UPDATE purchase_orders SET budget_committed = TRUE WHERE id = $1`, poID); err != nil {
+		return err
+	}
+	return p.enqueueBudgetCommitmentSnapshot(ctx, tx, budgetID)
 }
 
 // releasePOEncumbrance reverses the open (un-received) portion of a PO's firm
@@ -205,7 +214,7 @@ func (p *Procurement) releasePOEncumbrance(ctx context.Context, tx pgx.Tx, poID,
 		WHERE id = $1`, budgetID, open); err != nil {
 		return err
 	}
-	return nil
+	return p.enqueueBudgetCommitmentSnapshot(ctx, tx, budgetID)
 }
 
 // poPreApprovalStatuses are the PO states from which goods may not yet be
@@ -319,6 +328,9 @@ func (p *Procurement) recognizePOSpendOnReceipt(ctx context.Context, tx pgx.Tx, 
 				WHERE id = $1`, budgetID, amt); err != nil {
 				return err
 			}
+			if err := p.enqueueBudgetCommitmentSnapshot(ctx, tx, budgetID); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(ctx, `UPDATE purchase_orders SET spent_recognized = spent_recognized + $2 WHERE id = $1`, poID, amt); err != nil {
 			return err
@@ -348,6 +360,9 @@ func (p *Procurement) recognizePOSpendOnReceipt(ctx context.Context, tx pgx.Tx, 
 						    committed = committed + $2,
 						    remaining = allocated - pre_committed - (committed + $2) - GREATEST(spent - $2, 0)
 						WHERE id = $1`, budgetID, amt); err != nil {
+						return err
+					}
+					if err := p.enqueueBudgetCommitmentSnapshot(ctx, tx, budgetID); err != nil {
 						return err
 					}
 				}

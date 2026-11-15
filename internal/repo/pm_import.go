@@ -157,14 +157,23 @@ var ErrNoBudget = errors.New("no budget matches the department and PROCUREMENT_D
 // are UUIDs, so that value failed the insert's cast and every unmatched
 // import errored and was retried on each restart, for ever.
 func (p *Procurement) ResolveBudgetForDept(ctx context.Context, dept string) (string, error) {
+	// Prefer finance-mirrored envelopes (FIN:…) for the current calendar month,
+	// then any FIN:… for the dept, then legacy envelopes. Avoids UUID-order
+	// picks when many plan lines share one dept.
+	period := time.Now().UTC().Format("2006-01")
 	for _, candidate := range deptMatchCandidates(dept) {
 		var id string
 		err := p.pool.QueryRow(ctx, `
 			SELECT id FROM budgets
 			WHERE dept ILIKE $1
-			ORDER BY id
+			ORDER BY
+				CASE WHEN code LIKE 'FIN:%' AND period = $2 THEN 0
+				     WHEN code LIKE 'FIN:%' THEN 1
+				     ELSE 2 END,
+				period DESC,
+				id
 			LIMIT 1`,
-			candidate,
+			candidate, period,
 		).Scan(&id)
 		if err == nil {
 			return id, nil
