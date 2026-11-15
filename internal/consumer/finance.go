@@ -16,12 +16,18 @@ import (
 // Procurement subscribes to iag.finance and, for AP (vendor) payments, reflects
 // the settlement back onto the originating invoice + PO so its read model stops
 // showing a stale "Not Issued" / "Pending Approval" state.
-const financePaymentMade = "finance.payment.made"
+const (
+	financePaymentMade   = "finance.payment.made"
+	financeBudgetUpserted = "finance.budget.upserted"
+)
 
 type FinanceConfig struct {
 	Brokers []string
 	GroupID string
 	Topic   string
+	// PaymentWriteback enables finance.payment.made → vendor payment reflection.
+	// Budget mirror (finance.budget.upserted) is always on when this consumer runs.
+	PaymentWriteback bool
 }
 
 type Finance struct {
@@ -46,7 +52,8 @@ func (c *Finance) Run(ctx context.Context) error {
 	})
 	defer r.Close()
 
-	log.Printf("procurement finance consumer started topic=%s group=%s", c.cfg.Topic, c.cfg.GroupID)
+	log.Printf("procurement finance consumer started topic=%s group=%s paymentWriteback=%v",
+		c.cfg.Topic, c.cfg.GroupID, c.cfg.PaymentWriteback)
 	for {
 		msg, err := r.FetchMessage(ctx)
 		if err != nil {
@@ -58,7 +65,7 @@ func (c *Finance) Run(ctx context.Context) error {
 		}
 		if err := c.handle(ctx, msg.Value); err != nil {
 			// At-least-once: leave uncommitted so a transient failure retries on
-			// restart. RecordVendorPayment is idempotent (unique payment ref).
+			// restart. Handlers are idempotent (processed_events / FIN code).
 			log.Printf("procurement finance handle: %v", err)
 			continue
 		}
@@ -86,17 +93,34 @@ type paymentMadeData struct {
 	PaymentRef  string `json:"paymentRef"`
 }
 
+type budgetUpsertedData struct {
+	EntityID       string `json:"entityId"`
+	Period         string `json:"period"`
+	AccountCode    string `json:"accountCode"`
+	Amount         string `json:"amount"`
+	CostCenterID   string `json:"costCenterId"`
+	CostCenterCode string `json:"costCenterCode"`
+}
+
 func (c *Finance) handle(ctx context.Context, raw []byte) error {
 	var env financeEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return err
 	}
-	if env.Type != financePaymentMade {
+	switch env.Type {
+	case financePaymentMade:
+		if !c.cfg.PaymentWriteback {
+			return nil
+		}
+		return c.handlePaymentMade(ctx, env)
+	case financeBudgetUpserted:
+		return c.handleBudgetUpserted(ctx, env)
+	default:
 		return nil
 	}
+}
 
-	// Idempotency: skip events already reflected (belt-and-suspenders alongside
-	// the payments.reference unique index).
+func (c *Finance) handlePaymentMade(ctx context.Context, env financeEnvelope) error {
 	if env.ID != "" {
 		if done, err := c.repo.IsEventProcessed(ctx, env.ID); err != nil {
 			return err
@@ -124,4 +148,53 @@ func (c *Finance) handle(ctx context.Context, raw []byte) error {
 	}
 	log.Printf("procurement: reflected finance payment ref=%s for invoice=%s", strings.TrimSpace(d.PaymentRef), invoiceRef)
 	return c.repo.MarkEventProcessed(ctx, env.ID)
+}
+
+func (c *Finance) handleBudgetUpserted(ctx context.Context, env financeEnvelope) error {
+	if env.ID != "" {
+		if done, err := c.repo.IsEventProcessed(ctx, env.ID); err != nil {
+			return err
+		} else if done {
+			return nil
+		}
+	}
+
+	var d budgetUpsertedData
+	if err := json.Unmarshal(env.Data, &d); err != nil {
+		return err
+	}
+	cc := strings.TrimSpace(d.CostCenterCode)
+	if cc == "" && strings.TrimSpace(d.CostCenterID) == "" {
+		// Entity-wide finance plan lines have no department envelope to mirror.
+		return c.repo.MarkEventProcessed(ctx, env.ID)
+	}
+	if cc == "" {
+		cc = strings.TrimSpace(d.CostCenterID) // last resort; ResolveBudgetForDept wants a code
+	}
+	cc = repo.CanonicalDeptCode(cc)
+	amount, err := strconv.ParseFloat(strings.TrimSpace(d.Amount), 64)
+	if err != nil {
+		log.Printf("procurement: dropping finance budget with bad amount %q", d.Amount)
+		return c.repo.MarkEventProcessed(ctx, env.ID)
+	}
+	period := strings.TrimSpace(d.Period)
+	account := strings.TrimSpace(d.AccountCode)
+	entity := strings.TrimSpace(d.EntityID)
+	if period == "" || account == "" {
+		return c.repo.MarkEventProcessed(ctx, env.ID)
+	}
+	ccKey := cc
+	if ccKey == "" {
+		ccKey = "_"
+	}
+	code := "FIN:" + entity + ":" + period + ":" + account + ":" + ccKey
+	b, err := c.repo.UpsertBudgetFromFinance(ctx, code, period, amount, cc)
+	if err != nil {
+		return err
+	}
+	log.Printf("procurement: mirrored finance budget code=%s dept=%s allocated=%.2f id=%s", code, cc, amount, b.ID)
+	if env.ID != "" {
+		return c.repo.MarkEventProcessed(ctx, env.ID)
+	}
+	return nil
 }
