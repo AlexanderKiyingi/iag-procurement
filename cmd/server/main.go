@@ -268,19 +268,21 @@ func main() {
 			log.Printf("event bus: consuming %s as group %s (fleet fuel requests)", cfg.KafkaFleetTopic, cfg.KafkaFleetGroup)
 		}
 
-		if cfg.FinancePaymentWritebackEnabled {
-			financeConsumer := consumer.NewFinance(consumer.FinanceConfig{
-				Brokers: cfg.KafkaBrokers,
-				GroupID: cfg.KafkaFinanceGroup,
-				Topic:   cfg.KafkaFinanceTopic,
-			}, procurementRepo)
-			go func() {
-				if err := financeConsumer.Run(workerCtx); err != nil && workerCtx.Err() == nil {
-					log.Printf("finance consumer stopped: %v", err)
-				}
-			}()
-			log.Printf("event bus: consuming %s as group %s (finance payment writeback)", cfg.KafkaFinanceTopic, cfg.KafkaFinanceGroup)
-		}
+		// Finance consumer: always on with the bus — mirrors finance.budget.upserted
+		// into department envelopes. Payment writeback stays opt-in.
+		financeConsumer := consumer.NewFinance(consumer.FinanceConfig{
+			Brokers:          cfg.KafkaBrokers,
+			GroupID:          cfg.KafkaFinanceGroup,
+			Topic:            cfg.KafkaFinanceTopic,
+			PaymentWriteback: cfg.FinancePaymentWritebackEnabled,
+		}, procurementRepo)
+		go func() {
+			if err := financeConsumer.Run(workerCtx); err != nil && workerCtx.Err() == nil {
+				log.Printf("finance consumer stopped: %v", err)
+			}
+		}()
+		log.Printf("event bus: consuming %s as group %s (finance budget mirror; paymentWriteback=%v)",
+			cfg.KafkaFinanceTopic, cfg.KafkaFinanceGroup, cfg.FinancePaymentWritebackEnabled)
 
 		// Vendor master mesh: ingest finance's party.vendor.upserted. Always on
 		// whenever the event bus is up — no separate opt-in flag.

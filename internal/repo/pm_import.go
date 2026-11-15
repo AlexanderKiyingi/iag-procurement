@@ -157,20 +157,21 @@ var ErrNoBudget = errors.New("no budget matches the department and PROCUREMENT_D
 // are UUIDs, so that value failed the insert's cast and every unmatched
 // import errored and was retried on each restart, for ever.
 func (p *Procurement) ResolveBudgetForDept(ctx context.Context, dept string) (string, error) {
-	dept = strings.TrimSpace(dept)
-	var id string
-	err := p.pool.QueryRow(ctx, `
-		SELECT id FROM budgets
-		WHERE ($1 <> '' AND dept ILIKE $1)
-		ORDER BY id
-		LIMIT 1`,
-		dept,
-	).Scan(&id)
-	if err == nil {
-		return id, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return "", err
+	for _, candidate := range deptMatchCandidates(dept) {
+		var id string
+		err := p.pool.QueryRow(ctx, `
+			SELECT id FROM budgets
+			WHERE dept ILIKE $1
+			ORDER BY id
+			LIMIT 1`,
+			candidate,
+		).Scan(&id)
+		if err == nil {
+			return id, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return "", err
+		}
 	}
 	if def := strings.TrimSpace(os.Getenv("PROCUREMENT_DEFAULT_BUDGET_ID")); def != "" {
 		var found string
