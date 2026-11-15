@@ -130,6 +130,7 @@ func migrationFiles() []string {
 		"031_document_numbers.sql",
 		"032_form_fields.sql",
 		"033_vendor_quality.sql",
+		"034_finance_budget_mirror.sql",
 	}
 }
 
