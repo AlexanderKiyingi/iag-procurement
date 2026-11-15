@@ -3,6 +3,7 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -206,6 +207,40 @@ func BuildVendorUpserted(v VendorUpsert) (key string, payload []byte, err error)
 		key = v.Code
 	}
 	return key, body, nil
+}
+
+// BuildBudgetCommitmentChanged snapshots a procurement budget envelope for
+// finance (read model). Amounts are decimal strings.
+func BuildBudgetCommitmentChanged(
+	budgetID, code, period, dept string,
+	allocated, preCommitted, committed, spent, remaining float64,
+) (key string, payload []byte, err error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	fmtAmt := func(v float64) string { return strconv.FormatFloat(v, 'f', 2, 64) }
+	data := map[string]any{
+		"budgetId":     budgetID,
+		"code":         code,
+		"period":       period,
+		"dept":         dept,
+		"allocated":    fmtAmt(allocated),
+		"preCommitted": fmtAmt(preCommitted),
+		"committed":    fmtAmt(committed),
+		"spent":        fmtAmt(spent),
+		"remaining":    fmtAmt(remaining),
+	}
+	evt := platformEvent{
+		ID:          uuid.NewString(),
+		Type:        TypeBudgetCommitmentChanged,
+		Time:        now,
+		Source:      Source,
+		SpecVersion: SpecVersion,
+		Data:        data,
+	}
+	body, err := json.Marshal(evt)
+	if err != nil {
+		return "", nil, err
+	}
+	return budgetID, body, nil
 }
 
 // DispatchOutbox writes a persisted outbox row to Kafka. It implements

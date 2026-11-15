@@ -18,6 +18,9 @@ const (
 	TypeRequisitionRejected = "procurement.requisition.rejected"
 	TypeInvoiceReceived     = "procurement.invoice.received"
 	TypeGrnPosted           = "procurement.grn.posted"
+	// TypeBudgetCommitmentChanged is a snapshot of a procurement envelope's
+	// three-stage balances for finance reporting (not a GL posting).
+	TypeBudgetCommitmentChanged = "procurement.budget.commitment_changed"
 	// TypeVendorUpserted is the canonical cross-service vendor/supplier master
 	// event (party.vendor.upserted). Procurement emits it on local vendor
 	// create/update/delete so iag-finance and iag-supply-chain can keep a
